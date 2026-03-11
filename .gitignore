@@ -94,7 +94,6 @@ dist
 
 # vuepress v2.x temp and cache directory
 .temp
-.cache
 
 # Sveltekit cache directory
 .svelte-kit/
@@ -141,3 +140,6 @@ vite.config.ts.timestamp-*
 
 # MacOS files
 .DS_Store
+/soundcloud_cookies.txt
+/ssh-key-2026-03-09.key
+/ssh-key-2026-03-09.key.pub
