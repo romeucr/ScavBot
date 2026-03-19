@@ -34,6 +34,7 @@ import {
 } from './music/queue'
 import { playTestTone } from './music/testTone'
 import { fetchSoundcloudInfo, searchSoundcloud } from './providers/soundcloud'
+import { fetchSpotifyOembed, isSpotifyUrl, isSpotifyTrackUrl, searchSpotifyTracks, validateSpotifyCredentials } from './providers/spotify'
 
 loadDotEnvFile()
 setDefaultResultOrder('ipv4first')
@@ -54,6 +55,7 @@ const scConfig = {
 
 const idleMinutes = Number(getEnv('IDLE_DISCONNECT_MINUTES') || '15')
 const idleTimeoutMs = Number.isFinite(idleMinutes) && idleMinutes > 0 ? idleMinutes * 60 * 1000 : 0
+const spotifyEnabled = (getEnv('ENABLE_SPOTIFY') || 'false').toLowerCase() === 'true'
 
 const client = new Client({
   intents: [
@@ -172,6 +174,14 @@ client.once('clientReady', () => {
       console.error('Falha ao registrar comandos globais:', err)
     })
   }
+
+  const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
+  const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
+  if (spotifyEnabled && spotifyId && spotifySecret) {
+    validateSpotifyCredentials(spotifyId, spotifySecret)
+      .then(() => console.log('Spotify auth OK'))
+      .catch(err => console.error('Spotify auth falhou:', err))
+  }
 })
 
 function buildControlsRows(queue?: ReturnType<typeof getQueue>, disabled = false) {
@@ -239,6 +249,8 @@ async function sendNowPlaying(queue: NonNullable<ReturnType<typeof getQueue>>, s
 
 async function disableNowPlaying(queue: NonNullable<ReturnType<typeof getQueue>>) {
   if (!queue.nowPlayingMessageId) return
+  queue.nowPlayingToken = (queue.nowPlayingToken ?? 0) + 1
+  queue.nowPlayingUpdating = false
   try {
     const msg = await queue.textChannel.messages.fetch(queue.nowPlayingMessageId)
     await msg.edit({ components: buildControlsRows(queue, true) })
@@ -402,14 +414,34 @@ client.on('interactionCreate', async interaction => {
   }
 
   try {
-    const results = await searchSoundcloud(query, scConfig, 5)
-    if (!results.length) {
+    const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
+    const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
+
+    let items: AutocompleteItem[] = []
+    if (spotifyEnabled && spotifyId && spotifySecret) {
+      try {
+        const results = await searchSpotifyTracks(query, 5, spotifyId, spotifySecret)
+        items = results.map(r => ({
+          title: r.title,
+          url: r.url,
+          artist: r.artist,
+          durationSec: r.durationSec
+        }))
+      } catch (err) {
+        console.warn('Spotify search falhou, usando SoundCloud:', err)
+        items = await searchSoundcloud(query, scConfig, 5)
+      }
+    } else {
+      items = await searchSoundcloud(query, scConfig, 5)
+    }
+
+    if (!items.length) {
       await interaction.respond([])
       return
     }
 
-    const session = createAutocompleteSession(interaction.user.id, interaction.guild.id, results)
-    const choices = results.map((item, idx) => {
+    const session = createAutocompleteSession(interaction.user.id, interaction.guild.id, items)
+    const choices = items.map((item, idx) => {
       const duration = item.durationSec ? ` - ${formatProgress(0, item.durationSec).split('/')[1].trim()}` : ''
       const artist = item.artist ? `${item.artist} - ` : ''
       const name = `${artist}${item.title}${duration}`.slice(0, 100)
@@ -453,9 +485,56 @@ client.on('interactionCreate', async interaction => {
           await interaction.editReply({ content: 'Selecao invalida.' })
           return
         }
-        info = await fetchSoundcloudInfo(item.url, scConfig)
+        const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
+        const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
+        if (spotifyEnabled && spotifyId && spotifySecret && isSpotifyUrl(item.url)) {
+          const query = `${item.title} ${item.artist || ''}`.trim()
+          const results = await searchSoundcloud(query, scConfig, 5)
+          if (!results.length) {
+            await interaction.editReply({ content: 'Nao encontrei essa faixa no SoundCloud.' })
+            return
+          }
+          info = await fetchSoundcloudInfo(results[0].url, scConfig)
+        } else {
+          info = await fetchSoundcloudInfo(item.url, scConfig)
+        }
+      } else if (isSpotifyUrl(raw)) {
+        if (!isSpotifyTrackUrl(raw)) {
+          await interaction.editReply({ content: 'Por enquanto, so aceito links de faixa do Spotify.' })
+          return
+        }
+
+        const meta = await fetchSpotifyOembed(raw)
+        const query = `${meta.title} ${meta.artist || ''}`.trim()
+        const results = await searchSoundcloud(query, scConfig, 5)
+        if (!results.length) {
+          await interaction.editReply({ content: 'Nao encontrei essa faixa no SoundCloud.' })
+          return
+        }
+        info = await fetchSoundcloudInfo(results[0].url, scConfig)
       } else {
-        info = await fetchSoundcloudInfo(raw, scConfig)
+        const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
+        const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
+        if (spotifyEnabled && spotifyId && spotifySecret) {
+          try {
+            const results = await searchSpotifyTracks(raw, 1, spotifyId, spotifySecret)
+            if (results.length) {
+              const query = `${results[0].title} ${results[0].artist || ''}`.trim()
+              const scResults = await searchSoundcloud(query, scConfig, 5)
+              if (scResults.length) {
+                info = await fetchSoundcloudInfo(scResults[0].url, scConfig)
+              }
+            }
+          } catch (err) {
+            console.warn('Spotify search falhou, usando SoundCloud:', err)
+          }
+        } else {
+          // no-op
+        }
+
+        if (!info) {
+          info = await fetchSoundcloudInfo(raw, scConfig)
+        }
       }
 
       const song: Song = {
