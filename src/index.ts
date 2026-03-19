@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  type VoiceBasedChannel,
   StringSelectMenuBuilder,
   type StringSelectMenuInteraction,
   type ButtonInteraction,
@@ -13,6 +14,9 @@ import {
 } from 'discord.js'
 import { setDefaultResultOrder } from 'node:dns'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { createAudioPlayer, createAudioResource, AudioPlayerStatus, entersState, StreamType } from '@discordjs/voice'
 import { loadDotEnvFile, getEnv } from './utils/env'
 import { makeDebugLogger } from './utils/logger'
 import { connectToChannel } from './voice/connect'
@@ -57,6 +61,9 @@ const scConfig = {
 const idleMinutes = Number(getEnv('IDLE_DISCONNECT_MINUTES') || '15')
 const idleTimeoutMs = Number.isFinite(idleMinutes) && idleMinutes > 0 ? idleMinutes * 60 * 1000 : 0
 const spotifyEnabled = (getEnv('ENABLE_SPOTIFY') || 'false').toLowerCase() === 'true'
+const welcomeCooldownSec = Number(getEnv('WELCOME_COOLDOWN_SEC') || '10')
+const welcomeCooldownMs = Number.isFinite(welcomeCooldownSec) && welcomeCooldownSec > 0 ? welcomeCooldownSec * 1000 : 0
+const welcomeMp3Dir = getEnv('WELCOME_MP3_DIR') || path.resolve(process.cwd(), 'src', 'music', 'mp3')
 
 const client = new Client({
   intents: [
@@ -89,6 +96,8 @@ type AutocompleteSession = {
 
 const autocompleteSessions = new Map<string, AutocompleteSession>()
 const AUTOCOMPLETE_TTL_MS = 60 * 1000
+
+const lastWelcomeAt = new Map<string, number>()
 
 type AbiSession = {
   loadout: AbiLoadout
@@ -445,6 +454,51 @@ function resolveLoopMode(input?: string): LoopMode | undefined {
   if (value === 'one' || value === 'song') return 'one'
   if (value === 'all' || value === 'queue' || value === 'fila') return 'all'
   return undefined
+}
+
+function listWelcomeMp3s(): string[] {
+  try {
+    return fs.readdirSync(welcomeMp3Dir)
+      .filter(file => file.toLowerCase().endsWith('.mp3'))
+      .map(file => path.join(welcomeMp3Dir, file))
+  } catch {
+    return []
+  }
+}
+
+function pickRandom<T>(items: T[]): T | undefined {
+  if (!items.length) return undefined
+  const idx = Math.floor(Math.random() * items.length)
+  return items[idx]
+}
+
+async function playWelcomeSound(channel: VoiceBasedChannel, guildId: string): Promise<void> {
+  if (getQueue(guildId)) return
+  if (welcomeCooldownMs > 0) {
+    const last = lastWelcomeAt.get(guildId) || 0
+    if (Date.now() - last < welcomeCooldownMs) return
+  }
+
+  const files = listWelcomeMp3s()
+  const file = pickRandom(files)
+  if (!file) return
+
+  lastWelcomeAt.set(guildId, Date.now())
+
+  const connection = await connectToChannel(channel)
+  const player = createAudioPlayer()
+  const resource = createAudioResource(fs.createReadStream(file), { inputType: StreamType.Arbitrary })
+  connection.subscribe(player)
+  player.play(resource)
+
+  try {
+    await entersState(player, AudioPlayerStatus.Playing, 5_000)
+    await entersState(player, AudioPlayerStatus.Idle, 60_000)
+  } catch {
+    // ignore
+  } finally {
+    connection.destroy()
+  }
 }
 
 client.on('interactionCreate', async interaction => {
@@ -1016,6 +1070,20 @@ client.on('interactionCreate', async interaction => {
     } catch {
       // ignore
     }
+  }
+})
+
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  if (!newState.guild) return
+  if (!newState.member || newState.member.user.bot) return
+  if (oldState.channelId === newState.channelId) return
+  if (!newState.channel) return
+  if (getQueue(newState.guild.id)) return
+
+  try {
+    await playWelcomeSound(newState.channel as VoiceBasedChannel, newState.guild.id)
+  } catch (err) {
+    console.error('Erro ao tocar som de entrada:', err)
   }
 })
 

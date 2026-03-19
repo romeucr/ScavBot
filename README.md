@@ -15,6 +15,9 @@ DISCORD_TOKEN="seu_token"
 YTDLP_COOKIES_FILE="/caminho/para/soundcloud_cookies.txt"
 YTDLP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 IDLE_DISCONNECT_MINUTES=15
+# Opcional: som ao entrar no canal
+# WELCOME_MP3_DIR="/caminho/para/mp3"
+# WELCOME_COOLDOWN_SEC=30
 # Opcional: habilitar Spotify (para autocomplete e metadados)
 # ENABLE_SPOTIFY=true
 # SPOTIFY_CLIENT_ID="seu_client_id"
