@@ -75,6 +75,18 @@ type SearchSession = {
 const searchSessions = new Map<string, SearchSession>()
 const SEARCH_TTL_MS = 2 * 60 * 1000
 
+type AutocompleteItem = { title: string; url: string; artist?: string; durationSec?: number }
+type AutocompleteSession = {
+  id: string
+  userId: string
+  guildId: string
+  items: AutocompleteItem[]
+  createdAt: number
+}
+
+const autocompleteSessions = new Map<string, AutocompleteSession>()
+const AUTOCOMPLETE_TTL_MS = 60 * 1000
+
 function createSearchSession(userId: string, guildId: string, items: SearchSession['items']): SearchSession {
   const id = crypto.randomUUID()
   const session: SearchSession = { id, userId, guildId, items, createdAt: Date.now() }
@@ -93,9 +105,73 @@ function getSearchSession(id: string): SearchSession | undefined {
   return session
 }
 
+function createAutocompleteSession(userId: string, guildId: string, items: AutocompleteItem[]): AutocompleteSession {
+  const id = crypto.randomUUID()
+  const session: AutocompleteSession = { id, userId, guildId, items, createdAt: Date.now() }
+  autocompleteSessions.set(id, session)
+  setTimeout(() => autocompleteSessions.delete(id), AUTOCOMPLETE_TTL_MS)
+  return session
+}
+
 client.once('clientReady', () => {
   console.log('Bot online')
   console.log('Dica: defina DEBUG=1 no .env para logs detalhados.')
+
+  const guildId = getEnv('GUILD_ID')
+  const commandData = [
+    {
+      name: 'toca',
+      description: 'Tocar uma musica do SoundCloud',
+      options: [
+        {
+          name: 'query',
+          description: 'Nome ou link da musica',
+          type: 3,
+          required: true,
+          autocomplete: true
+        }
+      ]
+    }
+    ,
+    { name: 'pause', description: 'Pausar a musica' },
+    { name: 'resume', description: 'Retomar a musica' },
+    { name: 'skip', description: 'Pular a musica atual' },
+    { name: 'stop', description: 'Parar e limpar a fila' },
+    { name: 'leave', description: 'Sair do canal de voz' },
+    {
+      name: 'volume',
+      description: 'Definir volume (0-200)',
+      options: [
+        { name: 'valor', description: 'Volume de 0 a 200', type: 4, required: true }
+      ]
+    },
+    {
+      name: 'loop',
+      description: 'Configurar loop',
+      options: [
+        { name: 'modo', description: 'off | one | all', type: 3, required: true,
+          choices: [
+            { name: 'off', value: 'off' },
+            { name: 'one', value: 'one' },
+            { name: 'all', value: 'all' }
+          ]
+        }
+      ]
+    },
+    { name: 'status', description: 'Mostrar status da musica' },
+    { name: 'queue', description: 'Mostrar a fila' },
+    { name: 'teste_som', description: 'Teste de audio' }
+  ]
+
+  if (guildId) {
+    client.guilds.fetch(guildId).then(guild => guild.commands.set(commandData)).catch(err => {
+      console.error('Falha ao registrar comandos no guild:', err)
+    })
+  } else if (client.application) {
+    client.application.commands.set(commandData).catch(err => {
+      console.error('Falha ao registrar comandos globais:', err)
+    })
+  }
 })
 
 function buildControlsRows(queue?: ReturnType<typeof getQueue>, disabled = false) {
@@ -131,7 +207,7 @@ function buildNowPlayingEmbed(queue: NonNullable<ReturnType<typeof getQueue>>, s
     .addFields(
       { name: 'Artista', value: song.artist || 'Desconhecido', inline: true },
       { name: 'Album', value: song.album || 'Desconhecido', inline: true },
-      { name: 'Progresso', value: `${bar} ${time}` }
+      { name: 'Progresso', value: `${bar} \`${time}\`` }
     )
 
   if (song.thumbnailUrl) {
@@ -161,6 +237,17 @@ async function sendNowPlaying(queue: NonNullable<ReturnType<typeof getQueue>>, s
   void updateNowPlayingLoop(queue, token, message.id)
 }
 
+async function disableNowPlaying(queue: NonNullable<ReturnType<typeof getQueue>>) {
+  if (!queue.nowPlayingMessageId) return
+  try {
+    const msg = await queue.textChannel.messages.fetch(queue.nowPlayingMessageId)
+    await msg.edit({ components: buildControlsRows(queue, true) })
+  } catch {
+    // ignore
+  }
+  queue.nowPlayingMessageId = undefined
+}
+
 function formatStatus(queue: NonNullable<ReturnType<typeof getQueue>>): string {
   const current = queue.current
   if (!current) return 'Nada tocando.'
@@ -173,7 +260,7 @@ function formatStatus(queue: NonNullable<ReturnType<typeof getQueue>>): string {
     `Tocando: **${current.title}**`,
     `Artista: ${current.artist || 'Desconhecido'}`,
     `Album: ${current.album || 'Desconhecido'}`,
-    `${bar} ${time}`,
+    `${bar} \`${time}\``,
     `Volume: ${queue.volume}% | Loop: ${queue.loop}`,
     `Na fila: ${Math.max(0, queue.songs.length - 1)}`
   ].join('\n')
@@ -212,7 +299,7 @@ async function updateNowPlayingLoop(queue: NonNullable<ReturnType<typeof getQueu
   }
 }
 
-async function sendStatus(queue: NonNullable<ReturnType<typeof getQueue>>, interaction?: ButtonInteraction, channel?: any) {
+async function sendStatus(queue: NonNullable<ReturnType<typeof getQueue>>, interaction?: ButtonInteraction | any, channel?: any) {
   const content = formatStatus(queue)
   if (interaction) {
     await interaction.reply({ content, flags: MessageFlags.Ephemeral })
@@ -258,6 +345,7 @@ client.on('interactionCreate', async interaction => {
       queue.startedAt = undefined
       queue.pausedAt = undefined
       queue.lastProgressSec = undefined
+      await disableNowPlaying(queue)
       queue.connection.destroy()
       deleteQueue(interaction.guild.id)
     }
@@ -296,6 +384,282 @@ client.on('interactionCreate', async interaction => {
     } else {
       await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral })
     }
+  }
+})
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isAutocomplete()) return
+  if (!interaction.guild) return
+
+  if (interaction.commandName !== 'toca') return
+  const focused = interaction.options.getFocused(true)
+  if (focused.name !== 'query') return
+
+  const query = String(focused.value || '').trim()
+  if (!query) {
+    await interaction.respond([])
+    return
+  }
+
+  try {
+    const results = await searchSoundcloud(query, scConfig, 5)
+    if (!results.length) {
+      await interaction.respond([])
+      return
+    }
+
+    const session = createAutocompleteSession(interaction.user.id, interaction.guild.id, results)
+    const choices = results.map((item, idx) => {
+      const duration = item.durationSec ? ` - ${formatProgress(0, item.durationSec).split('/')[1].trim()}` : ''
+      const artist = item.artist ? `${item.artist} - ` : ''
+      const name = `${artist}${item.title}${duration}`.slice(0, 100)
+      return { name, value: `scid:${session.id}:${idx}` }
+    })
+
+    await interaction.respond(choices)
+  } catch (err) {
+    console.error('Erro no autocomplete:', err)
+    await interaction.respond([])
+  }
+})
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return
+  if (!interaction.guild) return
+  const command = interaction.commandName
+
+  if (command === 'toca') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+
+    const raw = interaction.options.getString('query', true)
+    const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+    if (!voiceChannel) {
+      await interaction.editReply({ content: 'Entre em um canal de voz primeiro!' })
+      return
+    }
+
+    try {
+      let info
+      if (raw.startsWith('scid:')) {
+        const [, id, idxRaw] = raw.split(':')
+        const idx = Number(idxRaw)
+        const session = autocompleteSessions.get(id)
+        if (!session || session.userId !== interaction.user.id || session.guildId !== interaction.guild.id) {
+          await interaction.editReply({ content: 'Selecao expirada. Tente novamente.' })
+          return
+        }
+        const item = session.items[idx]
+        if (!item) {
+          await interaction.editReply({ content: 'Selecao invalida.' })
+          return
+        }
+        info = await fetchSoundcloudInfo(item.url, scConfig)
+      } else {
+        info = await fetchSoundcloudInfo(raw, scConfig)
+      }
+
+      const song: Song = {
+        title: info.title,
+        url: info.url,
+        source: 'soundcloud',
+        durationSec: info.durationSec,
+        artist: info.artist,
+        album: info.album,
+        thumbnailUrl: info.thumbnailUrl
+      }
+
+      const existingQueue = getQueue(interaction.guild.id)
+      if (!existingQueue) {
+        const connection = await connectToChannel(voiceChannel)
+        const queue = createQueue(interaction.channel as any, connection)
+        queue.idleTimeoutMs = idleTimeoutMs
+        queue.songs.push(song)
+        setQueue(interaction.guild.id, queue)
+        await playNext(interaction.guild.id, scConfig, async (q, s) => {
+          await sendNowPlaying(q, s)
+        }, async q => {
+          await disableNowPlaying(q)
+        })
+      } else {
+        existingQueue.songs.push(song)
+        if (!existingQueue.current) {
+          if (existingQueue.idleTimer) {
+            clearTimeout(existingQueue.idleTimer)
+            existingQueue.idleTimer = undefined
+          }
+          await playNext(interaction.guild.id, scConfig, async (q, s) => {
+            await sendNowPlaying(q, s)
+          }, async q => {
+            await disableNowPlaying(q)
+          })
+        }
+      }
+
+      await interaction.editReply({ content: `✅ Adicionado: **${song.title}**` })
+    } catch (err) {
+      console.error('Erro ao tocar via /toca:', err)
+      try {
+        await interaction.editReply({ content: 'Erro ao tocar a selecao.' })
+      } catch {
+        // ignore
+      }
+    }
+    return
+  }
+
+  const queue = getQueue(interaction.guild.id)
+
+  if (command === 'queue') {
+    if (!queue || queue.songs.length === 0) {
+      await interaction.reply({ content: 'Fila vazia.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const upcoming = queue.songs.slice(0, 10)
+    const lines = upcoming.map((s, i) => `${i === 0 ? '▶️' : `${i}.`} ${s.title}`)
+    await interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'status') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    await sendStatus(queue, interaction)
+    return
+  }
+
+  if (command === 'pause') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    pause(queue)
+    await interaction.reply({ content: '⏸️ Pausado.', flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'resume') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    resume(queue)
+    await interaction.reply({ content: '▶️ Retomado.', flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'skip') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    queue.player.stop()
+    await interaction.reply({ content: '⏭️ Pulando.', flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'stop') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    queue.songs = []
+    queue.player.stop()
+    queue.current = undefined
+    queue.currentResource = undefined
+    queue.startedAt = undefined
+    queue.pausedAt = undefined
+    queue.lastProgressSec = undefined
+    await disableNowPlaying(queue)
+    queue.connection.destroy()
+    deleteQueue(interaction.guild.id)
+    await interaction.reply({ content: '⏹️ Musica parada.', flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'leave') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nao estou em um canal de voz.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    queue.songs = []
+    queue.player.stop()
+    queue.current = undefined
+    queue.currentResource = undefined
+    queue.startedAt = undefined
+    queue.pausedAt = undefined
+    queue.lastProgressSec = undefined
+    await disableNowPlaying(queue)
+    if (queue.idleTimer) {
+      clearTimeout(queue.idleTimer)
+      queue.idleTimer = undefined
+    }
+    queue.connection.destroy()
+    deleteQueue(interaction.guild.id)
+    await interaction.reply({ content: '👋 Saindo do canal de voz.', flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'volume') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const value = interaction.options.getInteger('valor', true)
+    setVolume(queue, value)
+    await interaction.reply({ content: `Volume ajustado para ${queue.volume}%`, flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'loop') {
+    if (!queue) {
+      await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const mode = interaction.options.getString('modo', true)
+    const resolved = resolveLoopMode(mode)
+    if (!resolved) {
+      await interaction.reply({ content: 'Modo invalido. Use off | one | all', flags: MessageFlags.Ephemeral })
+      return
+    }
+    setLoop(queue, resolved)
+    await interaction.reply({ content: `Loop ajustado para: ${queue.loop}`, flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'teste_som') {
+    const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+    if (!voiceChannel) {
+      await interaction.reply({ content: 'Entre em um canal de voz primeiro!', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const botMember = interaction.guild.members.me
+    if (!botMember) {
+      await interaction.reply({ content: 'Nao consegui verificar permissoes do bot.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const perms = voiceChannel.permissionsFor(botMember)
+    const missing: string[] = []
+    if (!perms?.has(PermissionsBitField.Flags.ViewChannel)) missing.push('ViewChannel')
+    if (!perms?.has(PermissionsBitField.Flags.Connect)) missing.push('Connect')
+    if (!perms?.has(PermissionsBitField.Flags.Speak)) missing.push('Speak')
+
+    if (missing.length) {
+      await interaction.reply({ content: `Faltam permissoes no canal de voz: ${missing.join(', ')}`, flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    await interaction.reply({ content: 'Iniciando teste de audio (5 segundos)...', flags: MessageFlags.Ephemeral })
+    try {
+      await playTestTone(voiceChannel, interaction.member as any)
+    } catch (err) {
+      console.error('Erro no teste de audio:', err)
+      await interaction.followUp({ content: 'Falha no teste de audio.', flags: MessageFlags.Ephemeral })
+    }
+    return
   }
 })
 
@@ -351,11 +715,24 @@ client.on('interactionCreate', async interaction => {
       queue.idleTimeoutMs = idleTimeoutMs
       queue.songs.push(song)
       setQueue(interaction.guild.id, queue)
-        await playNext(interaction.guild.id, scConfig, async (q, s) => {
-          await sendNowPlaying(q, s)
-        })
+      await playNext(interaction.guild.id, scConfig, async (q, s) => {
+        await sendNowPlaying(q, s)
+      }, async q => {
+        await disableNowPlaying(q)
+      })
     } else {
       existingQueue.songs.push(song)
+      if (!existingQueue.current) {
+        if (existingQueue.idleTimer) {
+          clearTimeout(existingQueue.idleTimer)
+          existingQueue.idleTimer = undefined
+        }
+        await playNext(interaction.guild.id, scConfig, async (q, s) => {
+          await sendNowPlaying(q, s)
+        }, async q => {
+          await disableNowPlaying(q)
+        })
+      }
     }
 
     await interaction.editReply({ content: `✅ Adicionado: **${song.title}**`, components: [] })
@@ -369,263 +746,6 @@ client.on('interactionCreate', async interaction => {
       }
     } catch {
       // ignore
-    }
-  }
-})
-
-client.on('messageCreate', async message => {
-  if (message.author.bot) return
-  if (!message.guild) return
-
-  const prefix = '!'
-  if (!message.content.startsWith(prefix)) return
-
-  const args = message.content.slice(prefix.length).trim().split(/ +/)
-  const command = (args.shift() || '').toLowerCase()
-
-  if (command === 'toca_essa') {
-    const search = args.join(' ')
-    if (!search) {
-      message.reply('Envie o nome ou link da musica.')
-      return
-    }
-
-    const voiceChannel = message.member?.voice.channel
-    if (!voiceChannel) {
-      message.reply('Entre em um canal de voz primeiro!')
-      return
-    }
-
-    let song: Song | null = null
-    const isSoundcloudUrl = /(^|\/\/)(soundcloud\.com|snd\.sc)\//i.test(search)
-    const scSearchMatch = search.match(/^(sc|soundcloud):\s*(.+)$/i)
-
-    try {
-      if (!isSoundcloudUrl) {
-        if (/^https?:\/\//i.test(search)) {
-          message.reply('Somente SoundCloud por enquanto. Use um link do SoundCloud ou `sc: termo`.')
-          return
-        }
-
-        const query = scSearchMatch ? scSearchMatch[2] : search
-        const trimmed = query.trim()
-        if (!trimmed) {
-          message.reply('Envie o termo apos `sc:`.')
-          return
-        }
-
-        const results = await searchSoundcloud(trimmed, scConfig, 5)
-        if (!results.length) {
-          message.reply('Nao encontrei resultados no SoundCloud.')
-          return
-        }
-
-        const session = createSearchSession(message.author.id, message.guild.id, results)
-        const options = results.map((item, idx) => ({
-          label: item.title.slice(0, 100),
-          description: item.artist ? item.artist.slice(0, 100) : 'SoundCloud',
-          value: String(idx)
-        }))
-
-        const menu = new StringSelectMenuBuilder()
-          .setCustomId(`sc_select:${session.id}`)
-          .setPlaceholder('Escolha uma musica')
-          .addOptions(options)
-
-        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)
-
-        await message.reply({ content: 'Escolha uma opcao:', components: [row] })
-        return
-      }
-
-      const info = await fetchSoundcloudInfo(search, scConfig)
-      song = {
-        title: info.title,
-        url: info.url,
-        source: 'soundcloud',
-        durationSec: info.durationSec,
-        artist: info.artist,
-        album: info.album,
-        thumbnailUrl: info.thumbnailUrl
-      }
-
-      if (!song) {
-        message.reply('Erro ao selecionar musica.')
-        return
-      }
-
-      const existingQueue = getQueue(message.guild.id)
-      if (!existingQueue) {
-        const connection = await connectToChannel(voiceChannel)
-        const queue = createQueue(message.channel as any, connection)
-        queue.idleTimeoutMs = idleTimeoutMs
-        queue.songs.push(song)
-        setQueue(message.guild.id, queue)
-        await playNext(message.guild.id, scConfig, async (q, s) => {
-          await sendNowPlaying(q, s)
-        })
-      } else {
-        existingQueue.songs.push(song)
-        message.channel.send(`✅ Adicionado a fila: **${song.title}**`)
-      }
-    } catch (err) {
-      console.error('Erro ao buscar musica:', err)
-      message.reply('Erro ao buscar musica.')
-    }
-  }
-
-  if (command === 'fila' || command === 'queue') {
-    const queue = getQueue(message.guild.id)
-    if (!queue || queue.songs.length === 0) {
-      message.reply('Fila vazia.')
-      return
-    }
-
-    const upcoming = queue.songs.slice(0, 10)
-    const lines = upcoming.map((s, i) => `${i === 0 ? '▶️' : `${i}.`} ${s.title}`)
-    message.reply(lines.join('\n'))
-  }
-
-  if (command === 'pause') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) {
-      message.reply('Nada tocando.')
-      return
-    }
-    pause(queue)
-    message.reply('⏸️ Pausado.')
-  }
-
-  if (command === 'resume') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) {
-      message.reply('Nada tocando.')
-      return
-    }
-    resume(queue)
-    message.reply('▶️ Retomado.')
-  }
-
-  if (command === 'volume') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) {
-      message.reply('Nada tocando.')
-      return
-    }
-
-    const value = Number(args[0])
-    if (!Number.isFinite(value)) {
-      message.reply(`Volume atual: ${queue.volume}% (0-200)`)
-      return
-    }
-
-    setVolume(queue, value)
-    message.reply(`Volume ajustado para ${queue.volume}%`) 
-  }
-
-  if (command === 'loop') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) {
-      message.reply('Nada tocando.')
-      return
-    }
-
-    const mode = resolveLoopMode(args[0])
-    if (!mode) {
-      message.reply(`Loop atual: ${queue.loop}. Use off | one | all`) 
-      return
-    }
-
-    setLoop(queue, mode)
-    message.reply(`Loop ajustado para: ${queue.loop}`)
-  }
-
-  if (command === 'status' || command === 'progress') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) {
-      message.reply('Nada tocando.')
-      return
-    }
-    await sendStatus(queue, undefined, message.channel)
-  }
-
-  if (command === 'skip') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) {
-      message.reply('Nada tocando.')
-      return
-    }
-    queue.player.stop()
-  }
-
-  if (command === 'stop') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) return
-    queue.songs = []
-    queue.player.stop()
-    queue.current = undefined
-    queue.currentResource = undefined
-    queue.startedAt = undefined
-    queue.pausedAt = undefined
-    queue.lastProgressSec = undefined
-    queue.connection.destroy()
-    deleteQueue(message.guild.id)
-    message.reply('⏹️ Musica parada.')
-  }
-
-  if (command === 'leave') {
-    const queue = getQueue(message.guild.id)
-    if (!queue) {
-      message.reply('Nao estou em um canal de voz.')
-      return
-    }
-
-    queue.songs = []
-    queue.player.stop()
-    queue.current = undefined
-    queue.currentResource = undefined
-    queue.startedAt = undefined
-    queue.pausedAt = undefined
-    queue.lastProgressSec = undefined
-    if (queue.idleTimer) {
-      clearTimeout(queue.idleTimer)
-      queue.idleTimer = undefined
-    }
-    queue.connection.destroy()
-    deleteQueue(message.guild.id)
-    message.reply('👋 Saindo do canal de voz.')
-  }
-
-  if (command === 'teste_som') {
-    const voiceChannel = message.member?.voice.channel
-    if (!voiceChannel || !message.member) {
-      message.reply('Entre em um canal de voz primeiro!')
-      return
-    }
-
-    const botMember = message.guild?.members.me
-    if (!botMember) {
-      message.reply('Nao consegui verificar permissoes do bot.')
-      return
-    }
-
-    const perms = voiceChannel.permissionsFor(botMember)
-    const missing: string[] = []
-    if (!perms?.has(PermissionsBitField.Flags.ViewChannel)) missing.push('ViewChannel')
-    if (!perms?.has(PermissionsBitField.Flags.Connect)) missing.push('Connect')
-    if (!perms?.has(PermissionsBitField.Flags.Speak)) missing.push('Speak')
-
-    if (missing.length) {
-      message.reply(`Faltam permissoes no canal de voz: ${missing.join(', ')}`)
-      return
-    }
-
-    message.reply('Iniciando teste de audio (5 segundos)...')
-    try {
-      await playTestTone(voiceChannel, message.member)
-    } catch (err) {
-      console.error('Erro no teste de audio:', err)
-      message.reply('Falha no teste de audio.')
     }
   }
 })

@@ -58,7 +58,8 @@ function applyVolume(queue: GuildQueue): void {
 export async function playNext(
   guildId: string,
   scConfig: SoundcloudConfig,
-  sendNowPlaying?: (queue: GuildQueue, song: Song) => Promise<void>
+  sendNowPlaying?: (queue: GuildQueue, song: Song) => Promise<void>,
+  onQueueEmpty?: (queue: GuildQueue) => Promise<void> | void
 ): Promise<void> {
   const serverQueue = queues.get(guildId)
   if (!serverQueue) return
@@ -69,6 +70,9 @@ export async function playNext(
     serverQueue.startedAt = undefined
     serverQueue.pausedAt = undefined
     serverQueue.lastProgressSec = undefined
+    if (onQueueEmpty) {
+      await onQueueEmpty(serverQueue)
+    }
     if (serverQueue.idleTimeoutMs && serverQueue.idleTimeoutMs > 0) {
       if (serverQueue.idleTimer) clearTimeout(serverQueue.idleTimer)
       serverQueue.idleTimer = setTimeout(() => {
@@ -120,7 +124,7 @@ export async function playNext(
 
     serverQueue.player.once(AudioPlayerStatus.Idle, () => {
       if (serverQueue.loop === 'one') {
-        void playNext(guildId, scConfig, sendNowPlaying)
+        void playNext(guildId, scConfig, sendNowPlaying, onQueueEmpty)
         return
       }
 
@@ -129,7 +133,7 @@ export async function playNext(
         serverQueue.songs.push(finished)
       }
 
-      void playNext(guildId, scConfig, sendNowPlaying)
+      void playNext(guildId, scConfig, sendNowPlaying, onQueueEmpty)
     })
 
     if (sendNowPlaying) {
@@ -140,7 +144,7 @@ export async function playNext(
   } catch (err) {
     console.error('Erro ao tocar musica:', err)
     serverQueue.songs.shift()
-    void playNext(guildId, scConfig, sendNowPlaying)
+    void playNext(guildId, scConfig, sendNowPlaying, onQueueEmpty)
   }
 }
 
@@ -187,7 +191,9 @@ export function getProgress(queue: GuildQueue): { elapsedSec: number; durationSe
 
 export function formatProgress(elapsedSec: number, durationSec?: number): string {
   if (!durationSec || durationSec <= 0) return `${formatTime(elapsedSec)} / ??`
-  return `${formatTime(elapsedSec)} / ${formatTime(durationSec)}`
+  const total = formatTime(durationSec)
+  const elapsed = formatTime(elapsedSec).padStart(total.length, ' ')
+  return `${elapsed} / ${total}`
 }
 
 export function formatProgressBar(elapsedSec: number, durationSec?: number, size = 15): string {
