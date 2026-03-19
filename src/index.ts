@@ -35,6 +35,7 @@ import {
 import { playTestTone } from './music/testTone'
 import { fetchSoundcloudInfo, searchSoundcloud } from './providers/soundcloud'
 import { fetchSpotifyOembed, isSpotifyUrl, isSpotifyTrackUrl, searchSpotifyTracks, validateSpotifyCredentials } from './providers/spotify'
+import { rollLoadout, type AbiLoadout } from './abi/randomizer'
 
 loadDotEnvFile()
 setDefaultResultOrder('ipv4first')
@@ -89,6 +90,37 @@ type AutocompleteSession = {
 const autocompleteSessions = new Map<string, AutocompleteSession>()
 const AUTOCOMPLETE_TTL_MS = 60 * 1000
 
+type AbiSession = {
+  loadout: AbiLoadout
+  showImages: boolean
+  label?: string
+  updatedAt: number
+}
+const abiSessions = new Map<string, AbiSession>()
+const ABI_SESSION_TTL_MS = 10 * 60 * 1000
+
+function setAbiSession(guildId: string, userId: string, session: AbiSession) {
+  const key = `${guildId}:${userId}`
+  abiSessions.set(key, session)
+  setTimeout(() => {
+    const existing = abiSessions.get(key)
+    if (existing && Date.now() - existing.updatedAt >= ABI_SESSION_TTL_MS) {
+      abiSessions.delete(key)
+    }
+  }, ABI_SESSION_TTL_MS + 1000)
+}
+
+function getAbiSession(guildId: string, userId: string): AbiSession | undefined {
+  const key = `${guildId}:${userId}`
+  const session = abiSessions.get(key)
+  if (!session) return undefined
+  if (Date.now() - session.updatedAt > ABI_SESSION_TTL_MS) {
+    abiSessions.delete(key)
+    return undefined
+  }
+  return session
+}
+
 function createSearchSession(userId: string, guildId: string, items: SearchSession['items']): SearchSession {
   const id = crypto.randomUUID()
   const session: SearchSession = { id, userId, guildId, items, createdAt: Date.now() }
@@ -120,6 +152,17 @@ client.once('clientReady', () => {
   console.log('Dica: defina DEBUG=1 no .env para logs detalhados.')
 
   const guildId = getEnv('GUILD_ID')
+  const clearGuild = getEnv('CLEAR_GUILD_COMMANDS') === '1'
+
+  if (guildId && clearGuild) {
+    client.guilds.fetch(guildId).then(guild => guild.commands.set([])).then(() => {
+      console.log('Comandos do guild limpos. Remova CLEAR_GUILD_COMMANDS do .env.')
+    }).catch(err => {
+      console.error('Falha ao limpar comandos do guild:', err)
+    })
+    return
+  }
+
   const commandData = [
     {
       name: 'toca',
@@ -162,7 +205,15 @@ client.once('clientReady', () => {
     },
     { name: 'status', description: 'Mostrar status da musica' },
     { name: 'queue', description: 'Mostrar a fila' },
-    { name: 'teste_som', description: 'Teste de audio' }
+    { name: 'teste_som', description: 'Teste de audio' },
+    {
+      name: 'abi_random',
+      description: 'Gerar loadout aleatorio do ABI',
+      options: [
+        { name: 'showimages', description: 'Mostrar imagens dos itens', type: 5, required: false },
+        { name: 'forchannel', description: 'Gerar para todos no canal de voz', type: 5, required: false }
+      ]
+    }
   ]
 
   if (guildId) {
@@ -225,6 +276,69 @@ function buildNowPlayingEmbed(queue: NonNullable<ReturnType<typeof getQueue>>, s
   }
 
   return embed
+}
+
+function buildAbiEmbed(loadout: AbiLoadout, title?: string) {
+  const fields = [
+    { name: 'Map', value: loadout.map.name, inline: true },
+    { name: 'Helmet', value: loadout.helmet.name, inline: true },
+    { name: 'Headset', value: loadout.headset.name, inline: true },
+    { name: 'Armor', value: loadout.armor.name, inline: true },
+    { name: 'Weapon', value: loadout.weapon.name, inline: true }
+  ]
+
+  if (loadout.chestRig) {
+    fields.splice(4, 0, { name: 'Chest Rig', value: loadout.chestRig.name, inline: true })
+  }
+
+  return new EmbedBuilder()
+    .setTitle(title || 'Random build')
+    .setColor(0xf1c40f)
+    .addFields(fields)
+}
+
+function buildAbiEmbeds(loadout: AbiLoadout, showImages: boolean, title?: string) {
+  const embeds: EmbedBuilder[] = []
+  embeds.push(buildAbiEmbed(loadout, title))
+
+  if (!showImages) return embeds
+
+  const thumbColor = 0x1f2a44
+  const addThumb = (label: string, item?: { name: string; imageUrl?: string }) => {
+    if (!item?.imageUrl) return
+    embeds.push(
+      new EmbedBuilder()
+        .setTitle(label)
+        .setDescription(item.name)
+        .setColor(thumbColor)
+        .setThumbnail(item.imageUrl)
+    )
+  }
+
+  addThumb('Helmet', loadout.helmet)
+  addThumb('Headset', loadout.headset)
+  addThumb('Armor', loadout.armor)
+  if (loadout.chestRig) addThumb('Chest Rig', loadout.chestRig)
+  addThumb('Weapon', loadout.weapon)
+
+  return embeds
+}
+
+function buildAbiRows(userId: string, showImages = false) {
+  const flag = showImages ? '1' : '0'
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`abi_reroll:${userId}:${flag}`)
+      .setLabel('Reroll')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(false),
+    new ButtonBuilder()
+      .setCustomId(`abi_images:${userId}:1`)
+      .setLabel('Mostrar imagens')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(showImages)
+  )
+  return [row]
 }
 
 async function sendNowPlaying(queue: NonNullable<ReturnType<typeof getQueue>>, song: Song) {
@@ -337,13 +451,51 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return
   if (!interaction.guild) return
 
+  const id = interaction.customId
+  if (id.startsWith('abi_reroll:')) {
+    const [, ownerId, flag] = id.split(':')
+    if (ownerId && interaction.user.id !== ownerId) {
+      await interaction.reply({ content: 'Somente quem pediu pode usar este botao.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const previous = getAbiSession(interaction.guild.id, interaction.user.id)
+    const label = previous?.label
+    const loadout = rollLoadout()
+    const showImages = flag === '1'
+    setAbiSession(interaction.guild.id, interaction.user.id, { loadout, showImages, label, updatedAt: Date.now() })
+    const title = label ? `Random build for ${label}` : undefined
+    const embeds = buildAbiEmbeds(loadout, showImages, title)
+    await interaction.update({ embeds, components: buildAbiRows(ownerId || interaction.user.id, showImages) })
+    return
+  }
+
+  if (id.startsWith('abi_images:')) {
+    const [, ownerId] = id.split(':')
+    if (ownerId && interaction.user.id !== ownerId) {
+      await interaction.reply({ content: 'Somente quem pediu pode usar este botao.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const session = getAbiSession(interaction.guild.id, interaction.user.id)
+    if (!session) {
+      await interaction.reply({ content: 'Sessao expirada. Rode /abi_random novamente.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    session.showImages = true
+    session.updatedAt = Date.now()
+    setAbiSession(interaction.guild.id, interaction.user.id, session)
+    const title = session.label ? `Random build for ${session.label}` : undefined
+    const embeds = buildAbiEmbeds(session.loadout, true, title)
+    await interaction.update({ embeds, components: buildAbiRows(ownerId || interaction.user.id, true) })
+    return
+  }
+
   const queue = getQueue(interaction.guild.id)
   if (!queue) {
     await interaction.reply({ content: 'Nada tocando.', flags: MessageFlags.Ephemeral })
     return
   }
-
-  const id = interaction.customId
 
   try {
     if (id === 'pause') pause(queue)
@@ -583,6 +735,44 @@ client.on('interactionCreate', async interaction => {
         // ignore
       }
     }
+    return
+  }
+
+  if (command === 'abi_random') {
+    const showImages = interaction.options.getBoolean('showimages') ?? false
+    const forChannel = interaction.options.getBoolean('forchannel') ?? false
+
+    if (forChannel) {
+      const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+      if (!voiceChannel) {
+        await interaction.reply({ content: 'Entre em um canal de voz primeiro!', flags: MessageFlags.Ephemeral })
+        return
+      }
+      const members = voiceChannel.members.filter(member => !member.user.bot)
+      if (!members.size) {
+        await interaction.reply({ content: 'Nao encontrei usuarios no canal de voz.', flags: MessageFlags.Ephemeral })
+        return
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+      const sharedMap = rollLoadout().map
+      for (const member of members.values()) {
+        const loadout = rollLoadout(sharedMap)
+        const title = `Random build for ${member.displayName}`
+        setAbiSession(interaction.guild.id, member.user.id, { loadout, showImages, label: member.displayName, updatedAt: Date.now() })
+        const embeds = buildAbiEmbeds(loadout, showImages, title)
+        await (interaction.channel as any).send({
+          embeds,
+          components: buildAbiRows(member.user.id, showImages)
+        })
+      }
+      await interaction.editReply({ content: `Gerados ${members.size} loadouts no canal.` })
+      return
+    }
+
+    const loadout = rollLoadout()
+    setAbiSession(interaction.guild.id, interaction.user.id, { loadout, showImages, updatedAt: Date.now() })
+    const embeds = buildAbiEmbeds(loadout, showImages)
+    await interaction.reply({ embeds, components: buildAbiRows(interaction.user.id, showImages) })
     return
   }
 
