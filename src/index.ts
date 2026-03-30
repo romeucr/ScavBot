@@ -68,7 +68,7 @@ const spotifyEnabled = (getEnv('ENABLE_SPOTIFY') || 'false').toLowerCase() === '
 const autocompleteMinChars = Math.max(1, Number(getEnv('AUTOCOMPLETE_MIN_CHARS') || '2'))
 const autocompleteLimit = Math.max(1, Math.min(10, Number(getEnv('AUTOCOMPLETE_LIMIT') || '10')))
 const playQueryMaxLength = Math.max(20, Number(getEnv('PLAY_QUERY_MAX_LENGTH') || '180'))
-const nowPlayingUpdateIntervalMs = Math.max(3_000, Number(getEnv('NOW_PLAYING_UPDATE_MS') || '5_000'))
+const nowPlayingUpdateIntervalMs = Math.max(1_000, Number(getEnv('NOW_PLAYING_UPDATE_MS') || '1_000'))
 const abiForChannelCooldownMs = Math.max(5_000, Number(getEnv('ABI_FORCHANNEL_COOLDOWN_MS') || '30_000'))
 const welcomeCooldownSec = Number(getEnv('WELCOME_COOLDOWN_SEC') || '10')
 const welcomeCooldownMs = Number.isFinite(welcomeCooldownSec) && welcomeCooldownSec > 0 ? welcomeCooldownSec * 1000 : 0
@@ -1119,7 +1119,7 @@ client.on('interactionCreate', async interaction => {
     if (!perms?.has(PermissionsBitField.Flags.Speak)) missing.push('Speak')
 
     if (missing.length) {
-      await interaction.reply({ content: `Faltam permissoes no canal de voz: ${missing.join(', ')}`, flags: MessageFlags.Ephemeral })
+      await interaction.reply({ content: `Missing voice channel permissions: ${missing.join(', ')}`, flags: MessageFlags.Ephemeral })
       return
     }
 
@@ -1171,7 +1171,8 @@ client.on('interactionCreate', async interaction => {
   try {
     await interaction.deferUpdate()
 
-    const info = await fetchSoundcloudInfo(item.url, scConfig)
+    let info = await fetchSoundcloudInfo(item.url, scConfig)
+    info = await enrichAlbumFromSpotify(info)
     const song: Song = {
       title: info.title,
       url: info.url,

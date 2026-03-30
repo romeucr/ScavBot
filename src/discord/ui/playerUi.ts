@@ -73,6 +73,6 @@ export function formatStatus(queue: GuildQueue): string {
     `Album: ${current.album || 'Unknown'}`,
     `${bar} \`${time}\``,
     `Volume: ${queue.volume}% | Loop: ${queue.loop}`,
-    `Na fila: ${Math.max(0, queue.songs.length - 1)}`
+    `In queue: ${Math.max(0, queue.songs.length - 1)}`
   ].join('\n')
 }
