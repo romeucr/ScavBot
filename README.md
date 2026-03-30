@@ -6,6 +6,11 @@ As we are Arena Breakout Infinite players, it also includes a randomizer for loa
 
 Feel free to use and modify as you like. Contributions are welcome!
 
+## Screenshots
+<img src="/docs/screenshots/player.png" width="600" />
+<img src="/docs/screenshots/query.png" width="600" />
+<img src="/docs/screenshots/queue.png" width="600" />
+
 ## Requirements
 - Node.js >= 22.12.0
 - `yt-dlp` available in PATH
