@@ -144,10 +144,18 @@ async function enrichAlbumFromSpotify<T extends { title: string; artist?: string
   if (!spotifyEnabled || !spotifyId || !spotifySecret) return info
 
   try {
-    const query = `${info.title} ${info.artist || ''}`.trim()
-    const results = await searchSpotifyTracks(query, 1, spotifyId, spotifySecret)
+    const withArtist = `${info.title} ${info.artist || ''}`.trim()
+    const results = await searchSpotifyTracks(withArtist, 1, spotifyId, spotifySecret)
     if (results.length && results[0].album) {
       return { ...info, album: results[0].album } as T
+    }
+    // Retry with title only when the artist is noisy or missing.
+    const titleOnly = info.title.trim()
+    if (titleOnly && titleOnly !== withArtist) {
+      const retry = await searchSpotifyTracks(titleOnly, 1, spotifyId, spotifySecret)
+      if (retry.length && retry[0].album) {
+        return { ...info, album: retry[0].album } as T
+      }
     }
   } catch (err) {
     logger.warn(`Failed to enrich album from Spotify ${logContext({ title: info.title })}`, err)
@@ -785,12 +793,12 @@ client.on('interactionCreate', async interaction => {
             return
           }
           info = await fetchSoundcloudInfo(results[0].url, scConfig)
-          if (!info.album && item.album) {
+          if ((!info.album || info.album === 'Unknown') && item.album) {
             info = { ...info, album: item.album }
           }
         } else {
           info = await fetchSoundcloudInfo(item.url, scConfig)
-          if (!info.album && item.album) {
+          if ((!info.album || info.album === 'Unknown') && item.album) {
             info = { ...info, album: item.album }
           }
         }
