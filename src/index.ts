@@ -137,6 +137,24 @@ function createAutocompleteSession(userId: string, guildId: string, items: Autoc
   return session
 }
 
+async function enrichAlbumFromSpotify(info: { title: string; artist?: string; album?: string }) {
+  if (info.album) return info
+  const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
+  const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
+  if (!spotifyEnabled || !spotifyId || !spotifySecret) return info
+
+  try {
+    const query = `${info.title} ${info.artist || ''}`.trim()
+    const results = await searchSpotifyTracks(query, 1, spotifyId, spotifySecret)
+    if (results.length && results[0].album) {
+      return { ...info, album: results[0].album }
+    }
+  } catch (err) {
+    logger.warn(`Failed to enrich album from Spotify ${logContext({ title: info.title })}`, err)
+  }
+  return info
+}
+
 function buildAutocompleteChoices(items: AutocompleteItem[], sessionId: string) {
   return items.map((item, idx) => {
     const duration = item.durationSec ? ` - ${formatProgress(0, item.durationSec).split('/')[1].trim()}` : ''
@@ -778,7 +796,7 @@ client.on('interactionCreate', async interaction => {
         }
       } else if (isSpotifyUrl(raw)) {
         if (!isSpotifyTrackUrl(raw)) {
-          await interaction.editReply({ content: 'Por enquanto, so aceito links de faixa do Spotify.' })
+          await interaction.editReply({ content: 'For now, only Spotify track links are supported.' })
           return
         }
 
@@ -820,6 +838,8 @@ client.on('interactionCreate', async interaction => {
           info = await fetchSoundcloudInfo(raw, scConfig)
         }
       }
+
+      info = await enrichAlbumFromSpotify(info)
 
       const song: Song = {
         title: info.title,
