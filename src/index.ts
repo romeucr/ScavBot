@@ -93,7 +93,7 @@ type SearchSession = {
 const searchSessions = new Map<string, SearchSession>()
 const SEARCH_TTL_MS = 2 * 60 * 1000
 
-type AutocompleteItem = { title: string; url: string; artist?: string; durationSec?: number }
+type AutocompleteItem = { title: string; url: string; artist?: string; album?: string; durationSec?: number }
 type AutocompleteSession = {
   id: string
   userId: string
@@ -660,6 +660,7 @@ client.on('interactionCreate', async interaction => {
             title: r.title,
             url: r.url,
             artist: r.artist,
+            album: r.album,
             durationSec: r.durationSec
           }))
         } else {
@@ -766,8 +767,14 @@ client.on('interactionCreate', async interaction => {
             return
           }
           info = await fetchSoundcloudInfo(results[0].url, scConfig)
+          if (!info.album && item.album) {
+            info = { ...info, album: item.album }
+          }
         } else {
           info = await fetchSoundcloudInfo(item.url, scConfig)
+          if (!info.album && item.album) {
+            info = { ...info, album: item.album }
+          }
         }
       } else if (isSpotifyUrl(raw)) {
         if (!isSpotifyTrackUrl(raw)) {
@@ -794,6 +801,9 @@ client.on('interactionCreate', async interaction => {
               const scResults = await searchSoundcloud(query, scConfig, 5)
               if (scResults.length) {
                 info = await fetchSoundcloudInfo(scResults[0].url, scConfig)
+                if (!info.album && results[0].album) {
+                  info = { ...info, album: results[0].album }
+                }
               }
             }
           } catch (err) {
