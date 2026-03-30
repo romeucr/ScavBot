@@ -144,13 +144,14 @@ async function enrichAlbumFromSpotify<T extends { title: string; artist?: string
   if (!spotifyEnabled || !spotifyId || !spotifySecret) return info
 
   try {
-    const withArtist = `${info.title} ${info.artist || ''}`.trim()
+    const normalized = normalizeTrackForLookup(info.title, info.artist)
+    const withArtist = `${normalized.title} ${normalized.artist || ''}`.trim()
     const results = await searchSpotifyTracks(withArtist, 1, spotifyId, spotifySecret)
     if (results.length && results[0].album) {
       return { ...info, album: results[0].album } as T
     }
     // Retry with title only when the artist is noisy or missing.
-    const titleOnly = info.title.trim()
+    const titleOnly = normalized.title.trim()
     if (titleOnly && titleOnly !== withArtist) {
       const retry = await searchSpotifyTracks(titleOnly, 1, spotifyId, spotifySecret)
       if (retry.length && retry[0].album) {
@@ -161,6 +162,22 @@ async function enrichAlbumFromSpotify<T extends { title: string; artist?: string
     logger.warn(`Failed to enrich album from Spotify ${logContext({ title: info.title })}`, err)
   }
   return info
+}
+
+function normalizeTrackForLookup(title: string, artist?: string) {
+  const rawTitle = title.trim()
+  let cleanTitle = rawTitle
+  let cleanArtist = (artist || '').trim()
+
+  if (!cleanArtist) {
+    const parts = rawTitle.split(/\\s[-–—]\\s/)
+    if (parts.length >= 2) {
+      cleanTitle = parts[0].trim()
+      cleanArtist = parts.slice(1).join(' - ').trim()
+    }
+  }
+
+  return { title: cleanTitle || rawTitle, artist: cleanArtist || artist }
 }
 
 function buildAutocompleteChoices(items: AutocompleteItem[], sessionId: string) {
@@ -786,7 +803,8 @@ client.on('interactionCreate', async interaction => {
         const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
         const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
         if (spotifyEnabled && spotifyId && spotifySecret && isSpotifyUrl(item.url)) {
-          const query = `${item.title} ${item.artist || ''}`.trim()
+          const normalized = normalizeTrackForLookup(item.title, item.artist)
+          const query = `${normalized.title} ${normalized.artist || ''}`.trim()
           const results = await searchSoundcloud(query, scConfig, 5)
           if (!results.length) {
             await interaction.editReply({ content: 'Could not find this track on SoundCloud.' })
@@ -809,7 +827,8 @@ client.on('interactionCreate', async interaction => {
         }
 
         const meta = await fetchSpotifyOembed(raw)
-        const query = `${meta.title} ${meta.artist || ''}`.trim()
+        const normalized = normalizeTrackForLookup(meta.title, meta.artist)
+        const query = `${normalized.title} ${normalized.artist || ''}`.trim()
         const results = await searchSoundcloud(query, scConfig, 5)
         if (!results.length) {
           await interaction.editReply({ content: 'Could not find this track on SoundCloud.' })
@@ -821,7 +840,8 @@ client.on('interactionCreate', async interaction => {
         const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
         if (spotifyEnabled && spotifyId && spotifySecret) {
           try {
-            const results = await searchSpotifyTracks(raw, 1, spotifyId, spotifySecret)
+            const normalized = normalizeTrackForLookup(raw, undefined)
+            const results = await searchSpotifyTracks(`${normalized.title} ${normalized.artist || ''}`.trim(), 1, spotifyId, spotifySecret)
             if (results.length) {
               const query = `${results[0].title} ${results[0].artist || ''}`.trim()
               const scResults = await searchSoundcloud(query, scConfig, 5)
