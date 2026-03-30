@@ -60,24 +60,6 @@ export function buildNowPlayingEmbed(queue: GuildQueue, song: Song) {
   return embed
 }
 
-export function formatStatus(queue: GuildQueue): string {
-  const current = queue.current
-  if (!current) return 'Nothing playing.'
-
-  const { elapsedSec, durationSec } = getProgress(queue)
-  const bar = formatProgressBar(elapsedSec, durationSec)
-  const time = formatProgress(elapsedSec, durationSec)
-
-  return [
-    `Now playing: **${current.title}**`,
-    `Artist: ${current.artist || 'Unknown'}`,
-    `Album: ${current.album || 'Unknown'}`,
-    `${bar} \`${time}\``,
-    `Volume: ${queue.volume}% | Loop: ${queue.loop}`,
-    `In queue: ${Math.max(0, queue.songs.length - 1)}`
-  ].join('\n')
-}
-
 export function buildQueueEmbed(queue: GuildQueue) {
   const upcoming = queue.songs.slice(0, 10)
   const embed = new EmbedBuilder()

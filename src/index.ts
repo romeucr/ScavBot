@@ -40,7 +40,7 @@ import { fetchSoundcloudInfo, searchSoundcloud } from './providers/soundcloud'
 import { fetchSpotifyOembed, isSpotifyUrl, isSpotifyTrackUrl, searchSpotifyTracks, validateSpotifyCredentials } from './providers/spotify'
 import { fetchLyrics } from './providers/lyrics'
 import { rollLoadout, type AbiLoadout } from './abi/randomizer'
-import { buildControlsRows, buildNowPlayingEmbed, buildQueueEmbed, formatStatus } from './discord/ui/playerUi'
+import { buildControlsRows, buildNowPlayingEmbed, buildQueueEmbed } from './discord/ui/playerUi'
 import { ensureUserCanControlPlayback } from './discord/voiceGuard'
 import { getAbiSession, setAbiSession } from './features/abi/session'
 
@@ -254,7 +254,6 @@ client.once('clientReady', () => {
         }
       ]
     },
-    { name: 'status', description: 'Show playback status' },
     { name: 'queue', description: 'Show queue' },
     { name: 'test_sound', description: 'Audio test' },
     {
@@ -423,21 +422,6 @@ async function updateNowPlayingLoop(queue: NonNullable<ReturnType<typeof getQueu
     await new Promise(resolve => setTimeout(resolve, nowPlayingUpdateIntervalMs))
     if (!queue.current) break
   }
-}
-
-async function sendStatus(queue: NonNullable<ReturnType<typeof getQueue>>, interaction?: ButtonInteraction | any, channel?: any) {
-  const content = formatStatus(queue)
-  if (interaction) {
-    await interaction.reply({ content, flags: MessageFlags.Ephemeral })
-    return
-  }
-
-  const msg = await channel.send(content)
-  setTimeout(() => {
-    msg.delete().catch((err: unknown) => {
-      logger.warn(`Failed to delete temporary status message ${logContext({ channelId: channel?.id })}`, err)
-    })
-  }, 15000)
 }
 
 function resolveLoopMode(input?: string): LoopMode | undefined {
@@ -1016,15 +1000,6 @@ client.on('interactionCreate', async interaction => {
     }
 
     await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
-    return
-  }
-
-  if (command === 'status') {
-    if (!queue) {
-      await interaction.reply({ content: 'Nothing playing.', flags: MessageFlags.Ephemeral })
-      return
-    }
-    await sendStatus(queue, interaction)
     return
   }
 
