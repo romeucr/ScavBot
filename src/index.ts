@@ -146,15 +146,19 @@ async function enrichAlbumFromSpotify<T extends { title: string; artist?: string
   try {
     const normalized = normalizeTrackForLookup(info.title, info.artist)
     const withArtist = `${normalized.title} ${normalized.artist || ''}`.trim()
+    debugLog?.(`Album lookup (Spotify): query="${withArtist}" title="${info.title}" artist="${info.artist || ''}"`)
     const results = await searchSpotifyTracks(withArtist, 1, spotifyId, spotifySecret)
     if (results.length && results[0].album) {
+      debugLog?.(`Album lookup hit: "${results[0].album}" for "${results[0].title}"`)
       return { ...info, album: results[0].album } as T
     }
     // Retry with title only when the artist is noisy or missing.
     const titleOnly = normalized.title.trim()
     if (titleOnly && titleOnly !== withArtist) {
+      debugLog?.(`Album lookup retry (title only): query="${titleOnly}"`)
       const retry = await searchSpotifyTracks(titleOnly, 1, spotifyId, spotifySecret)
       if (retry.length && retry[0].album) {
+        debugLog?.(`Album lookup hit (retry): "${retry[0].album}" for "${retry[0].title}"`)
         return { ...info, album: retry[0].album } as T
       }
     }
@@ -868,6 +872,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       info = await enrichAlbumFromSpotify(info)
+      debugLog?.(`Resolved track meta: title="${info.title}" artist="${info.artist || ''}" album="${info.album || ''}"`)
 
       const song: Song = {
         title: info.title,
