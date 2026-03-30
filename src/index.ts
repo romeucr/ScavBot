@@ -137,8 +137,14 @@ function createAutocompleteSession(userId: string, guildId: string, items: Autoc
   return session
 }
 
+function isMissingAlbum(value?: string) {
+  if (!value) return true
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'na' || normalized === 'n/a' || normalized === 'unknown'
+}
+
 async function enrichAlbumFromSpotify<T extends { title: string; artist?: string; album?: string }>(info: T): Promise<T> {
-  if (info.album) return info
+  if (!isMissingAlbum(info.album)) return info
   const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
   const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
   if (!spotifyEnabled || !spotifyId || !spotifySecret) return info
@@ -815,12 +821,12 @@ client.on('interactionCreate', async interaction => {
             return
           }
           info = await fetchSoundcloudInfo(results[0].url, scConfig)
-          if ((!info.album || info.album === 'Unknown') && item.album) {
+          if (isMissingAlbum(info.album) && item.album) {
             info = { ...info, album: item.album }
           }
         } else {
           info = await fetchSoundcloudInfo(item.url, scConfig)
-          if ((!info.album || info.album === 'Unknown') && item.album) {
+          if (isMissingAlbum(info.album) && item.album) {
             info = { ...info, album: item.album }
           }
         }
@@ -851,7 +857,7 @@ client.on('interactionCreate', async interaction => {
               const scResults = await searchSoundcloud(query, scConfig, 5)
               if (scResults.length) {
                 info = await fetchSoundcloudInfo(scResults[0].url, scConfig)
-                if (!info.album && results[0].album) {
+                if (isMissingAlbum(info.album) && results[0].album) {
                   info = { ...info, album: results[0].album }
                 }
               }
