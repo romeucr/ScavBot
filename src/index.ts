@@ -137,7 +137,7 @@ function createAutocompleteSession(userId: string, guildId: string, items: Autoc
   return session
 }
 
-async function enrichAlbumFromSpotify(info: { title: string; artist?: string; album?: string }) {
+async function enrichAlbumFromSpotify<T extends { title: string; artist?: string; album?: string }>(info: T): Promise<T> {
   if (info.album) return info
   const spotifyId = getEnv('SPOTIFY_CLIENT_ID')
   const spotifySecret = getEnv('SPOTIFY_CLIENT_SECRET')
@@ -147,7 +147,7 @@ async function enrichAlbumFromSpotify(info: { title: string; artist?: string; al
     const query = `${info.title} ${info.artist || ''}`.trim()
     const results = await searchSpotifyTracks(query, 1, spotifyId, spotifySecret)
     if (results.length && results[0].album) {
-      return { ...info, album: results[0].album }
+      return { ...info, album: results[0].album } as T
     }
   } catch (err) {
     logger.warn(`Failed to enrich album from Spotify ${logContext({ title: info.title })}`, err)
