@@ -7,6 +7,7 @@ import {
 import {
   formatProgress,
   formatProgressBar,
+  formatTime,
   getProgress,
   type GuildQueue,
   type Song
@@ -22,7 +23,7 @@ export function buildControlsRows(queue?: GuildQueue, disabled = false) {
     new ButtonBuilder().setCustomId('skip').setLabel('Skip').setStyle(ButtonStyle.Secondary).setDisabled(disabled),
     new ButtonBuilder().setCustomId('stop').setLabel('Stop').setStyle(ButtonStyle.Danger).setDisabled(disabled),
     new ButtonBuilder().setCustomId('loop').setLabel(loopLabel).setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId('status').setLabel('Status').setStyle(ButtonStyle.Secondary).setDisabled(disabled)
+    new ButtonBuilder().setCustomId('queue').setLabel('Queue').setStyle(ButtonStyle.Secondary).setDisabled(disabled)
   )
 
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -75,4 +76,30 @@ export function formatStatus(queue: GuildQueue): string {
     `Volume: ${queue.volume}% | Loop: ${queue.loop}`,
     `In queue: ${Math.max(0, queue.songs.length - 1)}`
   ].join('\n')
+}
+
+export function buildQueueEmbed(queue: GuildQueue) {
+  const upcoming = queue.songs.slice(0, 10)
+  const embed = new EmbedBuilder()
+    .setTitle('🎵 Playback Queue')
+    .setFooter({ text: `Total in queue: ${queue.songs.length}` })
+
+  if (upcoming.length > 0) {
+    const now = upcoming[0]
+    const artist = now.artist ? ` — ${now.artist}` : ''
+    const duration = now.durationSec ? ` (${formatTime(now.durationSec)})` : ''
+    const gap = upcoming.length > 1 ? '\n\u200B' : ''
+    embed.addFields({ name: '▶️ Now playing', value: `${now.title}${artist}${duration}${gap}` })
+  }
+
+  if (upcoming.length > 1) {
+    const nextLines = upcoming.slice(1).map((s, i) => {
+      const artist = s.artist ? ` — ${s.artist}` : ''
+      const duration = s.durationSec ? ` (${formatTime(s.durationSec)})` : ''
+      return `${i + 1}) ${s.title}${artist}${duration}`
+    })
+    embed.addFields({ name: 'Up next', value: nextLines.join('\n') })
+  }
+
+  return embed
 }

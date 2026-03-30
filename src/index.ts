@@ -40,7 +40,7 @@ import { fetchSoundcloudInfo, searchSoundcloud } from './providers/soundcloud'
 import { fetchSpotifyOembed, isSpotifyUrl, isSpotifyTrackUrl, searchSpotifyTracks, validateSpotifyCredentials } from './providers/spotify'
 import { fetchLyrics } from './providers/lyrics'
 import { rollLoadout, type AbiLoadout } from './abi/randomizer'
-import { buildControlsRows, buildNowPlayingEmbed, formatStatus } from './discord/ui/playerUi'
+import { buildControlsRows, buildNowPlayingEmbed, buildQueueEmbed, formatStatus } from './discord/ui/playerUi'
 import { ensureUserCanControlPlayback } from './discord/voiceGuard'
 import { getAbiSession, setAbiSession } from './features/abi/session'
 
@@ -616,8 +616,9 @@ client.on('interactionCreate', async interaction => {
       await interaction.update({ components: rows })
       return
     }
-    if (id === 'status') {
-      await sendStatus(queue, interaction)
+    if (id === 'queue') {
+      const embed = buildQueueEmbed(queue)
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
       return
     }
     if (id === 'lyrics') {
