@@ -926,7 +926,7 @@ client.on('interactionCreate', async interaction => {
     const upcoming = queue.songs.slice(0, 10)
     const embed = new EmbedBuilder()
       .setTitle('🎵 Playback Queue')
-      .setFooter({ text: `Total na fila: ${queue.songs.length}` })
+      .setFooter({ text: `Total in queue: ${queue.songs.length}` })
 
     if (upcoming.length > 0) {
       const now = upcoming[0]
