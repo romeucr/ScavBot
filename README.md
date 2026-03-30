@@ -80,7 +80,6 @@ Use this if you see duplicated commands in a server:
 - `/leave`
 - `/volume` – Set 0–200
 - `/loop` – off | one | all
-- `/status` – Status + progress
 - `/test_sound` – Audio test
 - `/abi_random` – ABI loadout randomizer (map, helmet, armor, weapon)
   Options: `showimages`, `forchannel`
