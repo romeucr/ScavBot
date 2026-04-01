@@ -4,7 +4,9 @@ export type InteractionMember = GuildMember | APIInteractionGuildMember | null
 
 export function getInteractionMemberId(member: InteractionMember): string | null {
   if (!member) return null
-  return 'user' in member ? member.user.id : member.id
+  if ('id' in member) return member.id
+  if ('user' in member && member.user?.id) return member.user.id
+  return null
 }
 
 export function getInteractionVoiceChannelId(member: InteractionMember): string | null {
