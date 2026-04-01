@@ -244,6 +244,12 @@ function buildVoteEmbed(session: VoteKickSession, channelName: string, status?: 
   return embed
 }
 
+function buildVoteNoticeEmbed(message: string) {
+  return new EmbedBuilder()
+    .setTitle('Vote Kick')
+    .setDescription(message)
+}
+
 function chunkButtons(buttons: ButtonBuilder[]) {
   const rows: ActionRowBuilder<ButtonBuilder>[] = []
   for (let i = 0; i < buttons.length; i += 5) {
@@ -1337,7 +1343,10 @@ client.on('interactionCreate', async interaction => {
 
     const existingVote = getVoteSessionByChannel(interaction.guild.id, voiceChannel.id)
     if (existingVote) {
-      await interaction.reply({ content: 'A vote is already active in this voice channel.', flags: MessageFlags.Ephemeral })
+      await interaction.reply({
+        embeds: [buildVoteNoticeEmbed('A vote is already active in this voice channel.')],
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
 
@@ -1347,7 +1356,10 @@ client.on('interactionCreate', async interaction => {
     const initiatorRemaining = initiatorCooldownAt - now
     if (initiatorRemaining > 0) {
       const seconds = Math.ceil(initiatorRemaining / 1000)
-      await interaction.reply({ content: `You can start another vote in ${seconds}s.`, flags: MessageFlags.Ephemeral })
+      await interaction.reply({
+        embeds: [buildVoteNoticeEmbed(`You can start another vote in ${seconds}s.`)],
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
 
@@ -1355,7 +1367,10 @@ client.on('interactionCreate', async interaction => {
     const channelRemaining = channelCooldownAt - now
     if (channelRemaining > 0) {
       const seconds = Math.ceil(channelRemaining / 1000)
-      await interaction.reply({ content: `This channel can start another vote in ${seconds}s.`, flags: MessageFlags.Ephemeral })
+      await interaction.reply({
+        embeds: [buildVoteNoticeEmbed(`This channel can start another vote in ${seconds}s.`)],
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
 
@@ -1366,18 +1381,27 @@ client.on('interactionCreate', async interaction => {
     if (recentVotes.length >= voteKickRateMax) {
       const nextAllowedAt = Math.min(...recentVotes) + rateWindowMs
       const seconds = Math.max(0, Math.ceil((nextAllowedAt - now) / 1000))
-      await interaction.reply({ content: `Too many votes in this channel. Try again in ${seconds}s.`, flags: MessageFlags.Ephemeral })
+      await interaction.reply({
+        embeds: [buildVoteNoticeEmbed(`Too many votes in this channel. Try again in ${seconds}s.`)],
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
 
     const members = voiceChannel.members.filter(member => !member.user.bot)
     if (members.size < 2) {
-      await interaction.reply({ content: 'Not enough users in the voice channel to start a vote.', flags: MessageFlags.Ephemeral })
+      await interaction.reply({
+        embeds: [buildVoteNoticeEmbed('Not enough users in the voice channel to start a vote.')],
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
 
     if (hasExcludedRole(interaction.member as APIInteractionGuildMember | GuildMember | null)) {
-      await interaction.reply({ content: 'You are not allowed to start a vote in this server.', flags: MessageFlags.Ephemeral })
+      await interaction.reply({
+        embeds: [buildVoteNoticeEmbed('You are not allowed to start a vote in this server.')],
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
 
@@ -1404,7 +1428,10 @@ client.on('interactionCreate', async interaction => {
       votes: 0
     }))
     if (candidates.length === 0) {
-      await interaction.reply({ content: 'No eligible targets available for a vote right now.', flags: MessageFlags.Ephemeral })
+      await interaction.reply({
+        embeds: [buildVoteNoticeEmbed('No eligible targets available for a vote right now.')],
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
     candidates.sort((a, b) => a.name.localeCompare(b.name))
