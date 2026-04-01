@@ -300,10 +300,12 @@ function buildVoteComponents(session: VoteKickSession, disabled = false) {
   return [selectRow, navRow]
 }
 
-function canVote(session: VoteKickSession, member: GuildMember | null) {
+function canVote(session: VoteKickSession, member: GuildMember | APIInteractionGuildMember | null) {
   if (!member) return 'Join a voice channel first!'
-  if (member.voice.channelId !== session.channelId) return 'You must be in the same voice channel as the vote.'
-  if (!session.eligibleVoters.has(member.id)) return 'You are not eligible to vote in this session.'
+  const memberId = 'user' in member ? member.user.id : member.id
+  const voiceChannelId = 'voice' in member ? member.voice.channelId : null
+  if (voiceChannelId !== session.channelId) return 'You must be in the same voice channel as the vote.'
+  if (!session.eligibleVoters.has(memberId)) return 'You are not eligible to vote in this session.'
   return null
 }
 
