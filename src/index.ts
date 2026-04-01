@@ -135,6 +135,7 @@ type VoteKickCandidate = {
   id: string
   name: string
   avatarUrl?: string
+  protectedRoleName?: string
   votes: number
 }
 
@@ -270,11 +271,12 @@ function buildVoteComponents(session: VoteKickSession, disabled = false) {
       const candidate = session.candidates.get(id)
       if (!candidate) return null
       const isLeader = maxVotes > 0 && leaderIds.has(candidate.id)
+      const protectedLabel = candidate.protectedRoleName ? ` (${candidate.protectedRoleName})` : ''
       return new ButtonBuilder()
         .setCustomId(`vote_candidate:${session.id}:${candidate.id}`)
-        .setLabel(candidate.name.slice(0, 80))
+        .setLabel(`${candidate.name}${protectedLabel}`.slice(0, 80))
         .setStyle(isLeader ? ButtonStyle.Success : ButtonStyle.Secondary)
-        .setDisabled(disabled)
+        .setDisabled(disabled || Boolean(candidate.protectedRoleName))
     }).filter(Boolean) as ButtonBuilder[]
 
     const cancel = new ButtonBuilder()
@@ -295,7 +297,8 @@ function buildVoteComponents(session: VoteKickSession, disabled = false) {
     const candidate = session.candidates.get(id)
     return {
       label: candidate?.name.slice(0, 100) || id,
-      value: id
+      value: id,
+      description: candidate?.protectedRoleName ? `Cannot kick: ${candidate.protectedRoleName}` : undefined
     }
   })
 
@@ -889,11 +892,9 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: 'Selected user is no longer available.', flags: MessageFlags.Ephemeral })
         return
       }
-      const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null)
-      const excludedRoleName = getExcludedRoleName(targetMember, interaction.guild)
-      if (excludedRoleName) {
+      if (target.protectedRoleName) {
         await interaction.reply({
-          content: `You cannot kick a "${excludedRoleName}".`,
+          content: `You cannot kick a "${target.protectedRoleName}".`,
           flags: MessageFlags.Ephemeral
         })
         return
@@ -1444,6 +1445,7 @@ client.on('interactionCreate', async interaction => {
       id: member.id,
       name: member.displayName,
       avatarUrl: member.displayAvatarURL({ extension: 'png', size: 128 }),
+      protectedRoleName: getExcludedRoleName(member, interaction.guild) || undefined,
       votes: 0
     }))
     if (candidates.length === 0) {
@@ -1713,11 +1715,9 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({ content: 'Selected user is no longer available.', flags: MessageFlags.Ephemeral })
       return
     }
-    const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null)
-    const excludedRoleName = getExcludedRoleName(targetMember, interaction.guild)
-    if (excludedRoleName) {
+    if (target.protectedRoleName) {
       await interaction.reply({
-        content: `You cannot kick a "${excludedRoleName}".`,
+        content: `You cannot kick a "${target.protectedRoleName}".`,
         flags: MessageFlags.Ephemeral
       })
       return
