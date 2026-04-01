@@ -9,8 +9,7 @@ import {
   StringSelectMenuBuilder,
   type VoiceBasedChannel,
   type ButtonInteraction,
-  MessageFlags,
-  type GuildMember
+  MessageFlags
 } from 'discord.js'
 import { setDefaultResultOrder } from 'node:dns'
 import crypto from 'node:crypto'
@@ -43,6 +42,12 @@ import { fetchLyrics } from './providers/lyrics'
 import { rollLoadout, type AbiLoadout } from './abi/randomizer'
 import { buildControlsRows, buildNowPlayingEmbed, buildQueueEmbed } from './discord/ui/playerUi'
 import { ensureUserCanControlPlayback } from './discord/voiceGuard'
+import {
+  type InteractionMember,
+  getInteractionVoiceChannel,
+  getInteractionMemberId,
+  getInteractionVoiceChannelId
+} from './discord/interactionMember'
 import { getAbiSession, setAbiSession } from './features/abi/session'
 
 loadDotEnvFile()
@@ -300,12 +305,12 @@ function buildVoteComponents(session: VoteKickSession, disabled = false) {
   return [selectRow, navRow]
 }
 
-function canVote(session: VoteKickSession, member: GuildMember | APIInteractionGuildMember | null) {
+function canVote(session: VoteKickSession, member: InteractionMember) {
   if (!member) return 'Join a voice channel first!'
-  const memberId = 'user' in member ? member.user.id : member.id
-  const voiceChannelId = 'voice' in member ? member.voice.channelId : null
+  const memberId = getInteractionMemberId(member)
+  const voiceChannelId = getInteractionVoiceChannelId(member)
   if (voiceChannelId !== session.channelId) return 'You must be in the same voice channel as the vote.'
-  if (!session.eligibleVoters.has(memberId)) return 'You are not eligible to vote in this session.'
+  if (!memberId || !session.eligibleVoters.has(memberId)) return 'You are not eligible to vote in this session.'
   return null
 }
 
@@ -683,7 +688,7 @@ function resolveLoopMode(input?: string): LoopMode | undefined {
   return undefined
 }
 
-function getVoiceGuardError(interaction: { member: GuildMember | null; guild: any }, queue?: ReturnType<typeof getQueue>): string | null {
+function getVoiceGuardError(interaction: { member: InteractionMember; guild: any }, queue?: ReturnType<typeof getQueue>): string | null {
   return ensureUserCanControlPlayback(interaction.member, queue, interaction.guild)
 }
 
@@ -1090,7 +1095,7 @@ client.on('interactionCreate', async interaction => {
       await interaction.editReply({ content: 'Only SoundCloud and Spotify links are supported.' })
       return
     }
-    const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+    const voiceChannel = getInteractionVoiceChannel(interaction.member as InteractionMember)
     if (!voiceChannel) {
       await interaction.editReply({ content: 'Join a voice channel first!' })
       return
@@ -1252,7 +1257,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: `Aguarde ${seconds}s para usar forchannel novamente.`, flags: MessageFlags.Ephemeral })
         return
       }
-      const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+      const voiceChannel = getInteractionVoiceChannel(interaction.member as InteractionMember)
       if (!voiceChannel) {
         await interaction.reply({ content: 'Join a voice channel first!', flags: MessageFlags.Ephemeral })
         return
@@ -1289,7 +1294,7 @@ client.on('interactionCreate', async interaction => {
   const queue = getQueue(interaction.guild.id)
 
   if (command === 'vote_kick') {
-    const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+    const voiceChannel = getInteractionVoiceChannel(interaction.member as InteractionMember)
     if (!voiceChannel) {
       await interaction.reply({ content: 'Join a voice channel first!', flags: MessageFlags.Ephemeral })
       return
@@ -1507,7 +1512,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (command === 'test_sound') {
-    const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+    const voiceChannel = getInteractionVoiceChannel(interaction.member as InteractionMember)
     if (!voiceChannel) {
       await interaction.reply({ content: 'Join a voice channel first!', flags: MessageFlags.Ephemeral })
       return
@@ -1606,7 +1611,7 @@ client.on('interactionCreate', async interaction => {
     return
   }
 
-  const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+  const voiceChannel = getInteractionVoiceChannel(interaction.member as InteractionMember)
   if (!voiceChannel) {
     await interaction.reply({ content: 'Join a voice channel first!', flags: MessageFlags.Ephemeral })
     return

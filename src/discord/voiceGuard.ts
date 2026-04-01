@@ -1,18 +1,18 @@
-import type { GuildMember, Guild } from 'discord.js'
+import type { Guild } from 'discord.js'
 import type { GuildQueue } from '../music/queue'
+import { getInteractionVoiceChannelId, type InteractionMember } from './interactionMember'
 
 export function ensureUserCanControlPlayback(
-  member: GuildMember | null,
+  member: InteractionMember,
   queue: GuildQueue | undefined,
   guild: Guild
 ): string | null {
-  if (!member) return 'Could not resolve your member context.'
-  const userVoice = member.voice.channel
-  if (!userVoice) return 'Join a voice channel first!'
+  const voiceChannelId = getInteractionVoiceChannelId(member)
+  if (!voiceChannelId) return 'Join a voice channel first!'
   if (!queue) return null
 
   const botVoiceId = guild.members.me?.voice.channelId
-  if (botVoiceId && userVoice.id !== botVoiceId) {
+  if (botVoiceId && voiceChannelId !== botVoiceId) {
     return 'You must be in the same voice channel as the bot.'
   }
 
