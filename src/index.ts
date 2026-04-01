@@ -348,6 +348,17 @@ function hasExcludedRole(member: GuildMember | APIInteractionGuildMember | null)
   return false
 }
 
+function getExcludedRoleName(member: GuildMember | APIInteractionGuildMember | null, guild: { roles?: any } | null) {
+  if (!member || voteKickExcludedRoleIds.size === 0) return null
+  const roleIds = 'roles' in member
+    ? Array.isArray(member.roles) ? member.roles : member.roles.cache.map(role => role.id)
+    : []
+  const blockedRoleId = roleIds.find(roleId => voteKickExcludedRoleIds.has(roleId))
+  if (!blockedRoleId) return null
+  const roleName = guild?.roles?.cache?.get(blockedRoleId)?.name
+  return roleName || blockedRoleId
+}
+
 async function updateVoteMessage(session: VoteKickSession, client: Client, status?: string, disabled = false) {
   const guild = await client.guilds.fetch(session.guildId).catch(() => null)
   const channel = guild?.channels.cache.get(session.textChannelId)
@@ -876,6 +887,15 @@ client.on('interactionCreate', async interaction => {
       const target = session.candidates.get(targetId)
       if (!target) {
         await interaction.reply({ content: 'Selected user is no longer available.', flags: MessageFlags.Ephemeral })
+        return
+      }
+      const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null)
+      const excludedRoleName = getExcludedRoleName(targetMember, interaction.guild)
+      if (excludedRoleName) {
+        await interaction.reply({
+          content: `You cannot kick a "${excludedRoleName}".`,
+          flags: MessageFlags.Ephemeral
+        })
         return
       }
 
@@ -1417,7 +1437,6 @@ client.on('interactionCreate', async interaction => {
     }
 
     const candidates = [...members.values()].filter(member => {
-      if (hasExcludedRole(member)) return false
       const blockedUntil = voteKickTargetCooldowns.get(member.id) || 0
       if (blockedUntil > now) return false
       return true
@@ -1692,6 +1711,15 @@ client.on('interactionCreate', async interaction => {
     const target = session.candidates.get(targetId)
     if (!target) {
       await interaction.reply({ content: 'Selected user is no longer available.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null)
+    const excludedRoleName = getExcludedRoleName(targetMember, interaction.guild)
+    if (excludedRoleName) {
+      await interaction.reply({
+        content: `You cannot kick a "${excludedRoleName}".`,
+        flags: MessageFlags.Ephemeral
+      })
       return
     }
 
