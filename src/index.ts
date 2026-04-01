@@ -9,7 +9,9 @@ import {
   StringSelectMenuBuilder,
   type VoiceBasedChannel,
   type ButtonInteraction,
-  MessageFlags
+  MessageFlags,
+  type APIInteractionGuildMember,
+  type GuildMember
 } from 'discord.js'
 import { setDefaultResultOrder } from 'node:dns'
 import crypto from 'node:crypto'
@@ -81,6 +83,17 @@ const welcomeCooldownMs = Number.isFinite(welcomeCooldownSec) && welcomeCooldown
 const welcomeMp3Dir = getEnv('WELCOME_MP3_DIR') || path.resolve(process.cwd(), 'src', 'music', 'mp3')
 const welcomeEnabled = (getEnv('WELCOME_ENABLED') || 'true').toLowerCase() === 'true'
 const voteKickTimeoutSec = Math.max(300, Number(getEnv('VOTE_KICK_TIMEOUT_SEC') || '300'))
+const voteKickUserCooldownSec = Math.max(0, Number(getEnv('VOTE_KICK_USER_COOLDOWN_SEC') || '1800'))
+const voteKickChannelCooldownSec = Math.max(0, Number(getEnv('VOTE_KICK_CHANNEL_COOLDOWN_SEC') || '1800'))
+const voteKickTargetCooldownSec = Math.max(0, Number(getEnv('VOTE_KICK_TARGET_COOLDOWN_SEC') || '1800'))
+const voteKickRateWindowSec = Math.max(60, Number(getEnv('VOTE_KICK_RATE_LIMIT_WINDOW_SEC') || '3600'))
+const voteKickRateMax = Math.max(1, Number(getEnv('VOTE_KICK_RATE_LIMIT_MAX') || '2'))
+const voteKickExcludedRoleIds = new Set(
+  (getEnv('VOTE_KICK_EXCLUDED_ROLE_IDS') || '1389524386599407726')
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean)
+)
 
 const client = new Client({
   intents: [
@@ -147,6 +160,10 @@ type VoteKickSession = {
 
 const voteSessionsByChannel = new Map<string, VoteKickSession>()
 const voteSessionsById = new Map<string, VoteKickSession>()
+const voteKickUserCooldowns = new Map<string, number>()
+const voteKickChannelCooldowns = new Map<string, number>()
+const voteKickTargetCooldowns = new Map<string, number>()
+const voteKickChannelRate = new Map<string, number[]>()
 
 function createSearchSession(userId: string, guildId: string, items: SearchSession['items']): SearchSession {
   const id = crypto.randomUUID()
@@ -314,6 +331,17 @@ function canVote(session: VoteKickSession, member: InteractionMember) {
   return null
 }
 
+function hasExcludedRole(member: GuildMember | APIInteractionGuildMember | null) {
+  if (!member || voteKickExcludedRoleIds.size === 0) return false
+  if ('roles' in member) {
+    if (Array.isArray(member.roles)) {
+      return member.roles.some(roleId => voteKickExcludedRoleIds.has(roleId))
+    }
+    return member.roles.cache.some(role => voteKickExcludedRoleIds.has(role.id))
+  }
+  return false
+}
+
 async function updateVoteMessage(session: VoteKickSession, client: Client, status?: string, disabled = false) {
   const guild = await client.guilds.fetch(session.guildId).catch(() => null)
   const channel = guild?.channels.cache.get(session.textChannelId)
@@ -365,6 +393,13 @@ async function finalizeVote(session: VoteKickSession, reason: string, client: Cl
         })
         resultText = `Kicked **${winner.name}** from the voice channel.`
       }
+    }
+  }
+
+  if (voteKickTargetCooldownSec > 0) {
+    const cooldownUntil = Date.now() + voteKickTargetCooldownSec * 1000
+    for (const candidateId of session.candidateIds) {
+      voteKickTargetCooldowns.set(candidateId, cooldownUntil)
     }
   }
 
@@ -1306,9 +1341,43 @@ client.on('interactionCreate', async interaction => {
       return
     }
 
+    const now = Date.now()
+    const initiatorId = interaction.user.id
+    const initiatorCooldownAt = voteKickUserCooldowns.get(initiatorId) || 0
+    const initiatorRemaining = initiatorCooldownAt - now
+    if (initiatorRemaining > 0) {
+      const seconds = Math.ceil(initiatorRemaining / 1000)
+      await interaction.reply({ content: `You can start another vote in ${seconds}s.`, flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const channelCooldownAt = voteKickChannelCooldowns.get(voiceChannel.id) || 0
+    const channelRemaining = channelCooldownAt - now
+    if (channelRemaining > 0) {
+      const seconds = Math.ceil(channelRemaining / 1000)
+      await interaction.reply({ content: `This channel can start another vote in ${seconds}s.`, flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const rateList = voteKickChannelRate.get(voiceChannel.id) || []
+    const rateWindowMs = voteKickRateWindowSec * 1000
+    const rateCutoff = now - rateWindowMs
+    const recentVotes = rateList.filter(ts => ts > rateCutoff)
+    if (recentVotes.length >= voteKickRateMax) {
+      const nextAllowedAt = Math.min(...recentVotes) + rateWindowMs
+      const seconds = Math.max(0, Math.ceil((nextAllowedAt - now) / 1000))
+      await interaction.reply({ content: `Too many votes in this channel. Try again in ${seconds}s.`, flags: MessageFlags.Ephemeral })
+      return
+    }
+
     const members = voiceChannel.members.filter(member => !member.user.bot)
     if (members.size < 2) {
       await interaction.reply({ content: 'Not enough users in the voice channel to start a vote.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    if (hasExcludedRole(interaction.member as APIInteractionGuildMember | GuildMember | null)) {
+      await interaction.reply({ content: 'You are not allowed to start a vote in this server.', flags: MessageFlags.Ephemeral })
       return
     }
 
@@ -1323,16 +1392,35 @@ client.on('interactionCreate', async interaction => {
       return
     }
 
-    const candidates = [...members.values()].map(member => ({
+    const candidates = [...members.values()].filter(member => {
+      if (hasExcludedRole(member)) return false
+      const blockedUntil = voteKickTargetCooldowns.get(member.id) || 0
+      if (blockedUntil > now) return false
+      return true
+    }).map(member => ({
       id: member.id,
       name: member.displayName,
       avatarUrl: member.displayAvatarURL({ extension: 'png', size: 128 }),
       votes: 0
     }))
+    if (candidates.length === 0) {
+      await interaction.reply({ content: 'No eligible targets available for a vote right now.', flags: MessageFlags.Ephemeral })
+      return
+    }
     candidates.sort((a, b) => a.name.localeCompare(b.name))
 
     const candidateIds = candidates.map(c => c.id)
     const mode: VoteKickSession['mode'] = candidateIds.length <= 24 ? 'buttons' : 'select'
+
+    if (voteKickUserCooldownSec > 0) {
+      voteKickUserCooldowns.set(initiatorId, now + voteKickUserCooldownSec * 1000)
+    }
+    if (voteKickChannelCooldownSec > 0) {
+      voteKickChannelCooldowns.set(voiceChannel.id, now + voteKickChannelCooldownSec * 1000)
+    }
+    const updatedRate = [...recentVotes, now]
+    voteKickChannelRate.set(voiceChannel.id, updatedRate)
+
     const session: VoteKickSession = {
       id: crypto.randomUUID(),
       guildId: interaction.guild.id,

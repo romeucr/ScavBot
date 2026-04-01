@@ -98,3 +98,4 @@ No API key required.
 - Spotify is optional. When enabled, autocomplete uses Spotify but playback still happens via SoundCloud.
 - ABI randomizer uses a local dataset. Edit `src/abi/data.ts` to customize items.
 - Vote kick timeout is configurable via `VOTE_KICK_TIMEOUT_SEC` (minimum 300 seconds).
+- Vote kick guardrails: `VOTE_KICK_USER_COOLDOWN_SEC`, `VOTE_KICK_CHANNEL_COOLDOWN_SEC`, `VOTE_KICK_TARGET_COOLDOWN_SEC`, `VOTE_KICK_RATE_LIMIT_WINDOW_SEC`, `VOTE_KICK_RATE_LIMIT_MAX`, `VOTE_KICK_EXCLUDED_ROLE_IDS`.
