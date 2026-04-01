@@ -83,6 +83,7 @@ Use this if you see duplicated commands in a server:
 - `/test_sound` – Audio test
 - `/abi_random` – ABI loadout randomizer (map, helmet, armor, weapon)
   Options: `showimages`, `forchannel`
+- `/vote_kick` – Start a vote to kick someone from your current voice channel
 
 ## Lyrics Button
 The player includes a **Lyrics** button that fetches lyrics from:
@@ -96,3 +97,4 @@ No API key required.
 - Autocomplete runs through Discord slash commands. If your server is slow, you can disable it via `AUTOCOMPLETE_ENABLED=false`.
 - Spotify is optional. When enabled, autocomplete uses Spotify but playback still happens via SoundCloud.
 - ABI randomizer uses a local dataset. Edit `src/abi/data.ts` to customize items.
+- Vote kick timeout is configurable via `VOTE_KICK_TIMEOUT_SEC` (minimum 300 seconds).

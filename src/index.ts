@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  StringSelectMenuBuilder,
   type VoiceBasedChannel,
   type ButtonInteraction,
   MessageFlags,
@@ -74,6 +75,7 @@ const welcomeCooldownSec = Number(getEnv('WELCOME_COOLDOWN_SEC') || '10')
 const welcomeCooldownMs = Number.isFinite(welcomeCooldownSec) && welcomeCooldownSec > 0 ? welcomeCooldownSec * 1000 : 0
 const welcomeMp3Dir = getEnv('WELCOME_MP3_DIR') || path.resolve(process.cwd(), 'src', 'music', 'mp3')
 const welcomeEnabled = (getEnv('WELCOME_ENABLED') || 'true').toLowerCase() === 'true'
+const voteKickTimeoutSec = Math.max(300, Number(getEnv('VOTE_KICK_TIMEOUT_SEC') || '300'))
 
 const client = new Client({
   intents: [
@@ -111,12 +113,257 @@ const AUTOCOMPLETE_TTL_MS = 60 * 1000
 const lastWelcomeAt = new Map<string, number>()
 const abiForChannelLastRun = new Map<string, number>()
 
+type VoteKickCandidate = {
+  id: string
+  name: string
+  avatarUrl?: string
+  votes: number
+}
+
+type VoteKickSession = {
+  id: string
+  guildId: string
+  channelId: string
+  channelName: string
+  textChannelId: string
+  messageId: string
+  initiatorId: string
+  initiatorName: string
+  candidates: Map<string, VoteKickCandidate>
+  candidateIds: string[]
+  eligibleVoters: Set<string>
+  votesByVoter: Map<string, string>
+  createdAt: number
+  endsAt: number
+  timeout?: NodeJS.Timeout
+  mode: 'buttons' | 'select'
+  page: number
+}
+
+const voteSessionsByChannel = new Map<string, VoteKickSession>()
+const voteSessionsById = new Map<string, VoteKickSession>()
+
 function createSearchSession(userId: string, guildId: string, items: SearchSession['items']): SearchSession {
   const id = crypto.randomUUID()
   const session: SearchSession = { id, userId, guildId, items, createdAt: Date.now() }
   searchSessions.set(id, session)
   setTimeout(() => searchSessions.delete(id), SEARCH_TTL_MS)
   return session
+}
+
+function getVoteChannelKey(guildId: string, channelId: string) {
+  return `${guildId}:${channelId}`
+}
+
+function getVoteSessionByChannel(guildId: string, channelId: string) {
+  return voteSessionsByChannel.get(getVoteChannelKey(guildId, channelId))
+}
+
+function setVoteSession(session: VoteKickSession) {
+  voteSessionsByChannel.set(getVoteChannelKey(session.guildId, session.channelId), session)
+  voteSessionsById.set(session.id, session)
+}
+
+function clearVoteSession(session: VoteKickSession) {
+  voteSessionsByChannel.delete(getVoteChannelKey(session.guildId, session.channelId))
+  voteSessionsById.delete(session.id)
+  if (session.timeout) {
+    clearTimeout(session.timeout)
+    session.timeout = undefined
+  }
+}
+
+function getVoteSessionById(id: string) {
+  return voteSessionsById.get(id)
+}
+
+function getVoteLeaders(session: VoteKickSession) {
+  let maxVotes = 0
+  for (const candidate of session.candidates.values()) {
+    if (candidate.votes > maxVotes) maxVotes = candidate.votes
+  }
+  if (!maxVotes) return { leaders: [] as VoteKickCandidate[], maxVotes }
+  const leaders = [...session.candidates.values()].filter(c => c.votes === maxVotes)
+  return { leaders, maxVotes }
+}
+
+function buildVoteEmbed(session: VoteKickSession, channelName: string, status?: string) {
+  const totalVoters = session.eligibleVoters.size
+  const votesCast = session.votesByVoter.size
+  const remainingSec = Math.max(0, Math.ceil((session.endsAt - Date.now()) / 1000))
+  const { leaders, maxVotes } = getVoteLeaders(session)
+  const leaderText = leaders.length === 1
+    ? `${leaders[0].name} (${maxVotes})`
+    : leaders.length > 1 ? `${leaders.map(l => l.name).join(', ')} (${maxVotes})` : 'None yet'
+
+  const embed = new EmbedBuilder()
+    .setTitle(`Vote Kick — ${channelName}`)
+    .setDescription(`Time left: ${remainingSec}s\nVotes: ${votesCast}/${totalVoters}\nLeader: ${leaderText}`)
+    .setFooter({ text: `Initiated by ${session.initiatorName}` })
+
+  const lines = session.candidateIds.map(id => {
+    const c = session.candidates.get(id)
+    if (!c) return null
+    return `${c.name} — ${c.votes}`
+  }).filter(Boolean) as string[]
+
+  if (lines.length) {
+    embed.addFields({ name: 'Candidates', value: lines.join('\n') })
+  }
+
+  if (status) {
+    embed.addFields({ name: 'Status', value: status })
+  }
+
+  if (leaders.length === 1 && leaders[0].avatarUrl) {
+    embed.setThumbnail(leaders[0].avatarUrl)
+  }
+
+  return embed
+}
+
+function chunkButtons(buttons: ButtonBuilder[]) {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = []
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(buttons.slice(i, i + 5)))
+  }
+  return rows
+}
+
+function buildVoteComponents(session: VoteKickSession, disabled = false) {
+  const pageSize = 25
+  const totalCandidates = session.candidateIds.length
+
+  if (session.mode === 'buttons') {
+    const { leaders, maxVotes } = getVoteLeaders(session)
+    const leaderIds = new Set(leaders.map(l => l.id))
+
+    const buttons = session.candidateIds.map(id => {
+      const candidate = session.candidates.get(id)
+      if (!candidate) return null
+      const isLeader = maxVotes > 0 && leaderIds.has(candidate.id)
+      return new ButtonBuilder()
+        .setCustomId(`vote_candidate:${session.id}:${candidate.id}`)
+        .setLabel(candidate.name.slice(0, 80))
+        .setStyle(isLeader ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setDisabled(disabled)
+    }).filter(Boolean) as ButtonBuilder[]
+
+    const cancel = new ButtonBuilder()
+      .setCustomId(`vote_cancel:${session.id}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled)
+
+    buttons.push(cancel)
+    return chunkButtons(buttons)
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalCandidates / pageSize))
+  const page = Math.max(0, Math.min(session.page, totalPages - 1))
+  const start = page * pageSize
+  const end = Math.min(start + pageSize, totalCandidates)
+  const options = session.candidateIds.slice(start, end).map(id => {
+    const candidate = session.candidates.get(id)
+    return {
+      label: candidate?.name.slice(0, 100) || id,
+      value: id
+    }
+  })
+
+  const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`vote_select:${session.id}:${page}`)
+      .setPlaceholder('Select a user to vote')
+      .setDisabled(disabled)
+      .addOptions(options)
+  )
+
+  const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`vote_prev:${session.id}:${page}`)
+      .setLabel('Prev')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled || page === 0),
+    new ButtonBuilder()
+      .setCustomId(`vote_next:${session.id}:${page}`)
+      .setLabel('Next')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled || page >= totalPages - 1),
+    new ButtonBuilder()
+      .setCustomId(`vote_cancel:${session.id}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled)
+  )
+
+  return [selectRow, navRow]
+}
+
+function canVote(session: VoteKickSession, member: GuildMember | null) {
+  if (!member) return 'Join a voice channel first!'
+  if (member.voice.channelId !== session.channelId) return 'You must be in the same voice channel as the vote.'
+  if (!session.eligibleVoters.has(member.id)) return 'You are not eligible to vote in this session.'
+  return null
+}
+
+async function updateVoteMessage(session: VoteKickSession, client: Client, status?: string, disabled = false) {
+  const guild = await client.guilds.fetch(session.guildId).catch(() => null)
+  const channel = guild?.channels.cache.get(session.textChannelId)
+  if (!channel || !channel.isTextBased()) return
+  const embed = buildVoteEmbed(session, session.channelName, status)
+  await (channel as any).messages.fetch(session.messageId).then((msg: any) => {
+    return msg.edit({ embeds: [embed], components: buildVoteComponents(session, disabled) })
+  }).catch(() => {
+    // ignore
+  })
+}
+
+function recordVote(session: VoteKickSession, voterId: string, targetId: string) {
+  const previous = session.votesByVoter.get(voterId)
+  if (previous && previous === targetId) return
+  if (previous) {
+    const prevCandidate = session.candidates.get(previous)
+    if (prevCandidate) prevCandidate.votes = Math.max(0, prevCandidate.votes - 1)
+  }
+  session.votesByVoter.set(voterId, targetId)
+  const candidate = session.candidates.get(targetId)
+  if (candidate) candidate.votes += 1
+}
+
+async function finalizeVote(session: VoteKickSession, reason: string, client: Client) {
+  const guild = await client.guilds.fetch(session.guildId).catch(() => null)
+  const channel = guild?.channels.cache.get(session.textChannelId)
+  const voiceChannel = guild?.channels.cache.get(session.channelId)
+
+  const { leaders, maxVotes } = getVoteLeaders(session)
+  let resultText = reason
+
+  if (maxVotes === 0) {
+    resultText = 'No votes were cast. No one was kicked.'
+  } else if (leaders.length > 1) {
+    resultText = `Tie between: ${leaders.map(l => l.name).join(', ')}. No one was kicked.`
+  } else if (leaders.length === 1) {
+    const winner = leaders[0]
+    const member = await guild?.members.fetch(winner.id).catch(() => null)
+    if (!member || !member.voice.channelId || member.voice.channelId !== session.channelId) {
+      resultText = 'Vote winner left the channel. No one was kicked.'
+    } else {
+      const perms = voiceChannel && guild?.members.me ? voiceChannel.permissionsFor(guild.members.me) : null
+      if (!perms?.has(PermissionsBitField.Flags.MoveMembers)) {
+        resultText = 'Missing Move Members permission. No one was kicked.'
+      } else {
+        await member.voice.setChannel(null, 'Vote kick result').catch(err => {
+          logger.warn(`Failed to disconnect vote winner ${logContext({ guildId: session.guildId, userId: winner.id })}`, err)
+        })
+        resultText = `Kicked **${winner.name}** from the voice channel.`
+      }
+    }
+  }
+
+  await updateVoteMessage(session, client, resultText, true)
+
+  clearVoteSession(session)
 }
 
 function getSearchSession(id: string): SearchSession | undefined {
@@ -255,6 +502,7 @@ client.once('clientReady', () => {
       ]
     },
     { name: 'queue', description: 'Show queue' },
+    { name: 'vote_kick', description: 'Start a vote to kick someone from the voice channel' },
     { name: 'test_sound', description: 'Audio test' },
     {
       name: 'abi_random',
@@ -527,6 +775,72 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.guild) return
 
   const id = interaction.customId
+  if (id.startsWith('vote_')) {
+    const parts = id.split(':')
+    const action = parts[0]
+    const sessionId = parts[1]
+    if (!sessionId) {
+      await interaction.reply({ content: 'Invalid vote session.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const session = getVoteSessionById(sessionId)
+    if (!session) {
+      await interaction.reply({ content: 'Vote session expired.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    if (action === 'vote_cancel') {
+      if (interaction.user.id !== session.initiatorId) {
+        await interaction.reply({ content: 'Only the initiator can cancel this vote.', flags: MessageFlags.Ephemeral })
+        return
+      }
+      await updateVoteMessage(session, client, 'Vote cancelled by the initiator.', true)
+      clearVoteSession(session)
+      return
+    }
+
+    const guard = canVote(session, interaction.member)
+    if (guard) {
+      await interaction.reply({ content: guard, flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    if (action === 'vote_prev' || action === 'vote_next') {
+      const page = Number(parts[2] || '0')
+      const totalPages = Math.max(1, Math.ceil(session.candidateIds.length / 25))
+      if (action === 'vote_prev') session.page = Math.max(0, page - 1)
+      if (action === 'vote_next') session.page = Math.min(totalPages - 1, page + 1)
+      await updateVoteMessage(session, client)
+      await interaction.deferUpdate()
+      return
+    }
+
+    if (action === 'vote_candidate') {
+      const targetId = parts[2]
+      if (!targetId) {
+        await interaction.reply({ content: 'Invalid vote target.', flags: MessageFlags.Ephemeral })
+        return
+      }
+      if (targetId === interaction.user.id) {
+        await interaction.reply({ content: 'You cannot vote for yourself.', flags: MessageFlags.Ephemeral })
+        return
+      }
+      const target = session.candidates.get(targetId)
+      if (!target) {
+        await interaction.reply({ content: 'Selected user is no longer available.', flags: MessageFlags.Ephemeral })
+        return
+      }
+
+      recordVote(session, interaction.user.id, targetId)
+      await updateVoteMessage(session, client)
+      await interaction.reply({ content: `You voted for "${target.name}".`, flags: MessageFlags.Ephemeral })
+
+      if (session.votesByVoter.size >= session.eligibleVoters.size) {
+        await finalizeVote(session, 'Vote ended (all votes cast).', client)
+      }
+      return
+    }
+  }
   if (id.startsWith('abi_reroll:')) {
     const [, ownerId, flag] = id.split(':')
     if (ownerId && interaction.user.id !== ownerId) {
@@ -972,6 +1286,81 @@ client.on('interactionCreate', async interaction => {
 
   const queue = getQueue(interaction.guild.id)
 
+  if (command === 'vote_kick') {
+    const voiceChannel = interaction.member && 'voice' in interaction.member ? interaction.member.voice.channel : null
+    if (!voiceChannel) {
+      await interaction.reply({ content: 'Join a voice channel first!', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const existingVote = getVoteSessionByChannel(interaction.guild.id, voiceChannel.id)
+    if (existingVote) {
+      await interaction.reply({ content: 'A vote is already active in this voice channel.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const members = voiceChannel.members.filter(member => !member.user.bot)
+    if (members.size < 2) {
+      await interaction.reply({ content: 'Not enough users in the voice channel to start a vote.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const botMember = interaction.guild.members.me
+    if (!botMember) {
+      await interaction.reply({ content: 'Could not verify bot permissions.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const perms = voiceChannel.permissionsFor(botMember)
+    if (!perms?.has(PermissionsBitField.Flags.MoveMembers)) {
+      await interaction.reply({ content: 'Missing Move Members permission in this voice channel.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    const candidates = [...members.values()].map(member => ({
+      id: member.id,
+      name: member.displayName,
+      avatarUrl: member.displayAvatarURL({ extension: 'png', size: 128 }),
+      votes: 0
+    }))
+    candidates.sort((a, b) => a.name.localeCompare(b.name))
+
+    const candidateIds = candidates.map(c => c.id)
+    const mode: VoteKickSession['mode'] = candidateIds.length <= 24 ? 'buttons' : 'select'
+    const session: VoteKickSession = {
+      id: crypto.randomUUID(),
+      guildId: interaction.guild.id,
+      channelId: voiceChannel.id,
+      channelName: voiceChannel.name,
+      textChannelId: interaction.channelId,
+      messageId: '',
+      initiatorId: interaction.user.id,
+      initiatorName: interaction.user.displayName,
+      candidates: new Map(candidates.map(c => [c.id, c])),
+      candidateIds,
+      eligibleVoters: new Set(members.map(m => m.id)),
+      votesByVoter: new Map(),
+      createdAt: Date.now(),
+      endsAt: Date.now() + voteKickTimeoutSec * 1000,
+      mode,
+      page: 0
+    }
+
+    const embed = buildVoteEmbed(session, voiceChannel.name)
+    const message = await interaction.reply({
+      embeds: [embed],
+      components: buildVoteComponents(session),
+      fetchReply: true
+    })
+    session.messageId = (message as any).id
+    setVoteSession(session)
+
+    session.timeout = setTimeout(() => {
+      void finalizeVote(session, 'Vote ended (timeout).', client)
+    }, voteKickTimeoutSec * 1000)
+
+    return
+  }
+
   if (command === 'queue') {
     if (!queue || queue.songs.length === 0) {
       await interaction.reply({ content: 'Queue is empty.', flags: MessageFlags.Ephemeral })
@@ -1157,6 +1546,44 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.guild) return
 
   const [prefix, sessionId] = interaction.customId.split(':')
+  if (prefix === 'vote_select') {
+    const page = Number(interaction.customId.split(':')[2] || '0')
+    const session = getVoteSessionById(sessionId || '')
+    if (!session) {
+      await interaction.reply({ content: 'Vote session expired.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const guard = canVote(session, interaction.member)
+    if (guard) {
+      await interaction.reply({ content: guard, flags: MessageFlags.Ephemeral })
+      return
+    }
+    const targetId = interaction.values[0]
+    if (!targetId) {
+      await interaction.reply({ content: 'Invalid vote target.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    if (targetId === interaction.user.id) {
+      await interaction.reply({ content: 'You cannot vote for yourself.', flags: MessageFlags.Ephemeral })
+      return
+    }
+    const target = session.candidates.get(targetId)
+    if (!target) {
+      await interaction.reply({ content: 'Selected user is no longer available.', flags: MessageFlags.Ephemeral })
+      return
+    }
+
+    session.page = page
+    recordVote(session, interaction.user.id, targetId)
+    await updateVoteMessage(session, client)
+    await interaction.reply({ content: `You voted for "${target.name}".`, flags: MessageFlags.Ephemeral })
+
+    if (session.votesByVoter.size >= session.eligibleVoters.size) {
+      await finalizeVote(session, 'Vote ended (all votes cast).', client)
+    }
+    return
+  }
+
   if (prefix !== 'sc_select' || !sessionId) return
 
   const session = getSearchSession(sessionId)
@@ -1251,6 +1678,22 @@ client.on('interactionCreate', async interaction => {
 })
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
+  if (oldState.channelId && oldState.channelId !== newState.channelId) {
+    const session = getVoteSessionByChannel(oldState.guild.id, oldState.channelId)
+    if (session) {
+      const leavingId = oldState.member?.id
+      if (leavingId) {
+        const candidate = session.candidates.get(leavingId)
+        const shouldCancel = leavingId === session.initiatorId || (candidate && candidate.votes > 0)
+        if (shouldCancel) {
+          await updateVoteMessage(session, client, 'Vote cancelled because the target left the channel.', true)
+          clearVoteSession(session)
+          return
+        }
+      }
+    }
+  }
+
   if (!welcomeEnabled) return
   if (!newState.guild) return
   if (!newState.member || newState.member.user.bot) return
