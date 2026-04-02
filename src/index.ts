@@ -1537,23 +1537,26 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (command === 'scav_bot_commands') {
-    const embed = new EmbedBuilder()
-      .setTitle('🧭 ScavBot Commands')
-      .setDescription([
-        '`/play <query>` — Search + play from SoundCloud',
-        '`/queue` — Show the current queue',
-        '`/pause` — Pause playback',
-        '`/resume` — Resume playback',
-        '`/skip` — Skip current track',
-        '`/stop` — Stop and clear the queue',
-        '`/leave` — Leave the voice channel',
-        '`/volume <0-200>` — Set volume',
-        '`/loop <off|one|all>` — Set loop mode',
-        '`/test_sound` — Audio test',
-        '`/vote_kick` — Start a vote to kick someone from your voice channel',
-        '`/abi_random` — ABI random loadout (map, helmet, armor, weapon)',
-        '`/scav_bot_commands` — Show this list'
-      ].join('\n'))
+    const embed = new EmbedBuilder().setTitle('🧭 ScavBot Commands')
+    try {
+      const commands = await interaction.client.application?.commands.fetch()
+      const sorted = commands ? [...commands.values()].sort((a, b) => a.name.localeCompare(b.name)) : []
+      const lines = sorted.map(cmd => {
+        const optionHint = cmd.options?.length
+          ? ` ${cmd.options.map(option => option.required ? `<${option.name}>` : `[${option.name}]`).join(' ')}`
+          : ''
+        return `\`/${cmd.name}${optionHint}\` — ${cmd.description}`
+      })
+      if (lines.length === 0) {
+        embed.setDescription('No commands found. Try again in a moment.')
+      } else {
+        embed.setDescription(lines.join('\n'))
+      }
+    } catch (err) {
+      logger.warn('Failed to fetch commands for /scav_bot_commands', err)
+      embed.setDescription('Could not load the command list right now. Please try again in a moment.')
+    }
+
     await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
     return
   }
