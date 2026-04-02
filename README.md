@@ -57,6 +57,10 @@ npm run build
 npm start
 ```
 
+## Recommended Setup (During Development)
+Keep `GUILD_ID` set in `.env` while you iterate — it makes slash command updates appear instantly in that server.  
+When you’re stable and want global commands for all servers, remove `GUILD_ID` and restart the bot (global propagation can take up to ~1 hour).
+
 ## Quality Scripts
 - `npm run typecheck` – TypeScript validation only
 - `npm run lint` – ESLint over `src/**/*.ts`
