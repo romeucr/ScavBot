@@ -581,7 +581,6 @@ client.once('clientReady', () => {
       name: 'abi_random',
       description: 'Generate a random ABI loadout',
       options: [
-        { name: 'showimages', description: 'Show item images', type: 5, required: false },
         { name: 'forchannel', description: 'Generate for everyone in the voice channel', type: 5, required: false }
       ]
     }
@@ -1319,8 +1318,8 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (command === 'abi_random') {
-    const showImages = interaction.options.getBoolean('showimages') ?? false
     const forChannel = interaction.options.getBoolean('forchannel') ?? false
+    const showImages = false
 
     if (forChannel) {
       const lastRun = abiForChannelLastRun.get(interaction.guild.id) || 0

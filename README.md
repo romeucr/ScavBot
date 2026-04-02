@@ -97,7 +97,7 @@ Use this if outdated global commands are still showing:
 - `/loop` – off | one | all
 - `/test_sound` – Audio test
 - `/abi_random` – ABI loadout randomizer (map, helmet, armor, weapon)
-  Options: `showimages`, `forchannel`
+  Options: `forchannel`
 - `/vote_kick` – Start a vote to kick someone from your current voice channel
 
 ## Lyrics Button
