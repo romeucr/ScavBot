@@ -514,12 +514,22 @@ client.once('clientReady', () => {
 
   const guildId = getEnv('GUILD_ID')
   const clearGuild = getEnv('CLEAR_GUILD_COMMANDS') === '1'
+  const clearGlobal = getEnv('CLEAR_GLOBAL_COMMANDS') === '1'
 
   if (guildId && clearGuild) {
     client.guilds.fetch(guildId).then(guild => guild.commands.set([])).then(() => {
       console.log('Comandos do guild limpos. Remova CLEAR_GUILD_COMMANDS do .env.')
     }).catch(err => {
       console.error('Failed to clear guild commands:', err)
+    })
+    return
+  }
+
+  if (clearGlobal) {
+    client.application?.commands.set([]).then(() => {
+      console.log('Global commands cleared. Remove CLEAR_GLOBAL_COMMANDS from .env.')
+    }).catch(err => {
+      console.error('Failed to clear global commands:', err)
     })
     return
   }

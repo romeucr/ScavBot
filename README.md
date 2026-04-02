@@ -70,6 +70,13 @@ Use this if you see duplicated commands in a server:
 2) Run the bot once
 3) Remove `CLEAR_GUILD_COMMANDS`
 
+## Clear Global Commands
+Use this if outdated global commands are still showing:
+
+1) Set `CLEAR_GLOBAL_COMMANDS=1` in `.env`
+2) Run the bot once
+3) Remove `CLEAR_GLOBAL_COMMANDS`
+
 ## Slash Commands
 - `/play` – Search + play SoundCloud (autocomplete)
 - `/queue` – Show queue (embed)
