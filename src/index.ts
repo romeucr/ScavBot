@@ -565,6 +565,7 @@ client.once('clientReady', () => {
     },
     { name: 'queue', description: 'Show queue' },
     { name: 'vote_kick', description: 'Start a vote to kick someone from the voice channel' },
+    { name: 'scav_bot_commands', description: 'Show all available commands' },
     { name: 'test_sound', description: 'Audio test' },
     {
       name: 'abi_random',
@@ -1531,6 +1532,28 @@ client.on('interactionCreate', async interaction => {
       embed.addFields({ name: 'Up next', value: nextLines.join('\n') })
     }
 
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
+    return
+  }
+
+  if (command === 'scav_bot_commands') {
+    const embed = new EmbedBuilder()
+      .setTitle('🧭 ScavBot Commands')
+      .setDescription([
+        '`/play <query>` — Search + play from SoundCloud',
+        '`/queue` — Show the current queue',
+        '`/pause` — Pause playback',
+        '`/resume` — Resume playback',
+        '`/skip` — Skip current track',
+        '`/stop` — Stop and clear the queue',
+        '`/leave` — Leave the voice channel',
+        '`/volume <0-200>` — Set volume',
+        '`/loop <off|one|all>` — Set loop mode',
+        '`/test_sound` — Audio test',
+        '`/vote_kick` — Start a vote to kick someone from your voice channel',
+        '`/abi_random` — ABI random loadout (map, helmet, armor, weapon)',
+        '`/scav_bot_commands` — Show this list'
+      ].join('\n'))
     await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
     return
   }
