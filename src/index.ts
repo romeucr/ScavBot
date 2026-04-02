@@ -666,7 +666,7 @@ function buildAbiRows(userId: string, showImages = false) {
       .setDisabled(false),
     new ButtonBuilder()
       .setCustomId(`abi_images:${userId}:1`)
-      .setLabel('Mostrar imagens')
+      .setLabel('Show Loadout Images')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(showImages)
   )
