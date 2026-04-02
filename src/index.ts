@@ -1550,7 +1550,25 @@ client.on('interactionCreate', async interaction => {
       if (lines.length === 0) {
         embed.setDescription('No commands found. Try again in a moment.')
       } else {
-        embed.setDescription(lines.join('\n'))
+        const groupFor = (name: string) => {
+          if (['play', 'queue', 'pause', 'resume', 'skip', 'stop', 'leave', 'volume', 'loop', 'test_sound'].includes(name)) return 'Music'
+          if (['vote_kick'].includes(name)) return 'Moderation'
+          if (['abi_random'].includes(name)) return 'ABI'
+          return 'Other'
+        }
+        const grouped = new Map<string, string[]>()
+        for (const line of lines) {
+          const match = line.match(/^`\/(\w+)/)
+          const group = match ? groupFor(match[1]) : 'Other'
+          if (!grouped.has(group)) grouped.set(group, [])
+          grouped.get(group)?.push(line)
+        }
+        const order = ['Music', 'Moderation', 'ABI', 'Other']
+        for (const name of order) {
+          const items = grouped.get(name)
+          if (!items || items.length === 0) continue
+          embed.addFields({ name, value: items.join('\n') })
+        }
       }
     } catch (err) {
       logger.warn('Failed to fetch commands for /scav_bot_commands', err)
