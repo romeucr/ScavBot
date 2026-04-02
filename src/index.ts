@@ -166,6 +166,17 @@ const voteKickChannelCooldowns = new Map<string, number>()
 const voteKickTargetCooldowns = new Map<string, number>()
 const voteKickChannelRate = new Map<string, number[]>()
 
+const abiImageMapPath = path.resolve(process.cwd(), 'src', 'abi', 'imageMap.json')
+let abiImageMap: Record<string, string> = {}
+try {
+  if (fs.existsSync(abiImageMapPath)) {
+    abiImageMap = JSON.parse(fs.readFileSync(abiImageMapPath, 'utf-8')) as Record<string, string>
+  }
+} catch (err) {
+  logger.warn('Failed to load ABI image map. Falling back to remote URLs.', err)
+  abiImageMap = {}
+}
+
 function createSearchSession(userId: string, guildId: string, items: SearchSession['items']): SearchSession {
   const id = crypto.randomUUID()
   const session: SearchSession = { id, userId, guildId, items, createdAt: Date.now() }
@@ -629,21 +640,40 @@ function buildAbiEmbed(loadout: AbiLoadout, title?: string) {
     .addFields(fields)
 }
 
-function buildAbiEmbeds(loadout: AbiLoadout, showImages: boolean, title?: string) {
+type AbiEmbedResult = {
+  embeds: EmbedBuilder[]
+  files: { attachment: string; name: string }[]
+}
+
+function buildAbiEmbeds(loadout: AbiLoadout, showImages: boolean, title?: string): AbiEmbedResult {
   const embeds: EmbedBuilder[] = []
+  const files: { attachment: string; name: string }[] = []
   embeds.push(buildAbiEmbed(loadout, title))
 
-  if (!showImages) return embeds
+  if (!showImages) return { embeds, files }
 
   const thumbColor = 0x1f2a44
+  const attached = new Set<string>()
+  const pushAttachment = (imageUrl: string) => {
+    const localPath = abiImageMap[imageUrl]
+    if (!localPath || !fs.existsSync(localPath)) return null
+    const filename = path.basename(localPath)
+    if (!attached.has(filename)) {
+      files.push({ attachment: localPath, name: filename })
+      attached.add(filename)
+    }
+    return `attachment://${filename}`
+  }
+
   const addThumb = (label: string, item?: { name: string; imageUrl?: string }) => {
     if (!item?.imageUrl) return
+    const attachmentUrl = pushAttachment(item.imageUrl)
     embeds.push(
       new EmbedBuilder()
         .setTitle(label)
         .setDescription(item.name)
         .setColor(thumbColor)
-        .setThumbnail(item.imageUrl)
+        .setThumbnail(attachmentUrl || item.imageUrl)
     )
   }
 
@@ -653,7 +683,7 @@ function buildAbiEmbeds(loadout: AbiLoadout, showImages: boolean, title?: string
   if (loadout.chestRig) addThumb('Chest Rig', loadout.chestRig)
   addThumb('Weapon', loadout.weapon)
 
-  return embeds
+  return { embeds, files }
 }
 
 function buildAbiRows(userId: string, showImages = false) {
@@ -933,8 +963,8 @@ client.on('interactionCreate', async interaction => {
     const showImages = flag === '1'
     setAbiSession(interaction.guild.id, interaction.user.id, { loadout, showImages, label, updatedAt: Date.now() })
     const title = label ? `Random build for ${label}` : undefined
-    const embeds = buildAbiEmbeds(loadout, showImages, title)
-    await interaction.update({ embeds, components: buildAbiRows(ownerId || interaction.user.id, showImages) })
+    const { embeds, files } = buildAbiEmbeds(loadout, showImages, title)
+    await interaction.update({ embeds, components: buildAbiRows(ownerId || interaction.user.id, showImages), files })
     return
   }
 
@@ -954,8 +984,8 @@ client.on('interactionCreate', async interaction => {
     session.updatedAt = Date.now()
     setAbiSession(interaction.guild.id, interaction.user.id, session)
     const title = session.label ? `Random build for ${session.label}` : undefined
-    const embeds = buildAbiEmbeds(session.loadout, true, title)
-    await interaction.update({ embeds, components: buildAbiRows(ownerId || interaction.user.id, true) })
+    const { embeds, files } = buildAbiEmbeds(session.loadout, true, title)
+    await interaction.update({ embeds, components: buildAbiRows(ownerId || interaction.user.id, true), files })
     return
   }
 
@@ -1346,9 +1376,10 @@ client.on('interactionCreate', async interaction => {
         const loadout = rollLoadout(sharedMap)
         const title = `Random build for ${member.displayName}`
         setAbiSession(interaction.guild.id, member.user.id, { loadout, showImages, label: member.displayName, updatedAt: Date.now() })
-        const embeds = buildAbiEmbeds(loadout, showImages, title)
+        const { embeds, files } = buildAbiEmbeds(loadout, showImages, title)
         await (interaction.channel as any).send({
           embeds,
+          files,
           components: buildAbiRows(member.user.id, showImages)
         })
       }
@@ -1358,8 +1389,8 @@ client.on('interactionCreate', async interaction => {
 
     const loadout = rollLoadout()
     setAbiSession(interaction.guild.id, interaction.user.id, { loadout, showImages, updatedAt: Date.now() })
-    const embeds = buildAbiEmbeds(loadout, showImages)
-    await interaction.reply({ embeds, components: buildAbiRows(interaction.user.id, showImages) })
+    const { embeds, files } = buildAbiEmbeds(loadout, showImages)
+    await interaction.reply({ embeds, files, components: buildAbiRows(interaction.user.id, showImages) })
     return
   }
 
