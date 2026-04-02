@@ -77,6 +77,10 @@ Use this if outdated global commands are still showing:
 2) Run the bot once
 3) Remove `CLEAR_GLOBAL_COMMANDS`
 
+## Guild vs Global Commands
+- Keep `GUILD_ID` set while you are iterating. Commands update instantly in that server.
+- Remove `GUILD_ID` when you want global commands for all servers (can take up to ~1 hour to propagate).
+
 ## Slash Commands
 - `/play` – Search + play SoundCloud (autocomplete)
 - `/queue` – Show queue (embed)
