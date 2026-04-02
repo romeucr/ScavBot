@@ -1543,7 +1543,7 @@ client.on('interactionCreate', async interaction => {
       const sorted = commands ? [...commands.values()].sort((a, b) => a.name.localeCompare(b.name)) : []
       const lines = sorted.map(cmd => {
         const optionHint = cmd.options?.length
-          ? ` ${cmd.options.map(option => option.required ? `<${option.name}>` : `[${option.name}]`).join(' ')}`
+          ? ` ${cmd.options.map(option => ('required' in option && option.required) ? `<${option.name}>` : `[${option.name}]`).join(' ')}`
           : ''
         return `\`/${cmd.name}${optionHint}\` — ${cmd.description}`
       })
