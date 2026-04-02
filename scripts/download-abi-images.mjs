@@ -8,6 +8,7 @@ const repoRoot = process.cwd()
 const dataPath = path.join(repoRoot, 'src', 'abi', 'data.ts')
 const imagesDir = path.join(repoRoot, 'docs', 'abi-images')
 const mapPath = path.join(repoRoot, 'src', 'abi', 'imageMap.json')
+const imagesDirRel = path.join('docs', 'abi-images')
 
 if (!fs.existsSync(dataPath)) {
   console.error(`Missing ${dataPath}`)
@@ -62,7 +63,7 @@ for (const url of urls) {
   const ext = extMatch ? extMatch[0].toLowerCase() : '.png'
   const finalName = `${base}-${hash(url)}${ext}`
   const localPath = path.join(imagesDir, finalName)
-  imageMap[url] = localPath
+  imageMap[url] = path.join(imagesDirRel, finalName)
 }
 
 for (const [url, localPath] of Object.entries(imageMap)) {

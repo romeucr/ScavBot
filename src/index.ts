@@ -655,8 +655,10 @@ function buildAbiEmbeds(loadout: AbiLoadout, showImages: boolean, title?: string
   const thumbColor = 0x1f2a44
   const attached = new Set<string>()
   const pushAttachment = (imageUrl: string) => {
-    const localPath = abiImageMap[imageUrl]
-    if (!localPath || !fs.existsSync(localPath)) return null
+    const mappedPath = abiImageMap[imageUrl]
+    if (!mappedPath) return null
+    const localPath = path.isAbsolute(mappedPath) ? mappedPath : path.resolve(process.cwd(), mappedPath)
+    if (!fs.existsSync(localPath)) return null
     const filename = path.basename(localPath)
     if (!attached.has(filename)) {
       files.push({ attachment: localPath, name: filename })
