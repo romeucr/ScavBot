@@ -16,6 +16,18 @@ Feel free to use and modify as you like. Contributions are welcome!
 - `yt-dlp` available in PATH
 - `ffmpeg` installed
 
+## ABI Image Cache
+ABI item images are cached locally to avoid broken thumbnails in Discord.
+
+- Images live in `docs/abi-images/`
+- Mappings are stored in `src/abi/imageMap.json`
+
+To refresh or add new images after editing `src/abi/data.ts`:
+
+```bash
+node scripts/download-abi-images.mjs
+```
+
 ## Setup
 Create a `.env` file:
 
