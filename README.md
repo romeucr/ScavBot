@@ -29,6 +29,17 @@ node scripts/download-abi-images.mjs
 ```
 
 ## Setup
+## Create the Discord Bot (App + Invite)
+1) Go to the Discord Developer Portal and create a new application.
+2) In **Bot**, click **Add Bot**, disable **Public Bot** if you only want to control invites yourself, then click **Reset Token** and copy it (you’ll paste it into `DISCORD_TOKEN` below).
+3) In **OAuth2 → URL Generator**, select scopes `bot` and `applications.commands`.
+4) In the same screen, select these Bot Permissions:
+   View Channels, Send Messages, Embed Links, Attach Files, Read Message History, Use Application Commands, Connect, Speak, Use Voice Activity.
+5) Copy the generated URL and use it to invite the bot to your server.
+
+Notes: This bot does **not** require privileged intents (Members, Presence, Message Content). If you later add features that rely on those, enable them in **Bot → Privileged Gateway Intents**.
+
+## Configure Environment
 Create a `.env` file:
 
 ```env
